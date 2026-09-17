@@ -2,10 +2,11 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtUser } from '../common/interfaces/jwt-user.interface';
-import { TipePengambilan, StatusPesananOnline } from '@prisma/client';
+import { Role, TipePengambilan, StatusPesananOnline } from '@prisma/client';
 
 @Injectable()
 export class PesananService {
@@ -13,6 +14,16 @@ export class PesananService {
 
   private scopeSatminkal(user: JwtUser) {
     return user.satminkalId;
+  }
+
+  private isStaffRole(user: JwtUser): boolean {
+    const roleStr = String(user.role || '').toUpperCase().replace(/\s+/g, '_');
+    return (
+      roleStr === Role.ADMIN_KOPERASI ||
+      roleStr === Role.KASIR_TOKO ||
+      roleStr === 'ADMIN_KOPERASI' ||
+      roleStr === 'KASIR_TOKO'
+    );
   }
 
   async createPesanan(
@@ -31,6 +42,19 @@ export class PesananService {
     },
   ) {
     const satminkalId = this.scopeSatminkal(user);
+    let targetAnggotaId = dto.anggotaId;
+
+    if (!this.isStaffRole(user)) {
+      const anggota = await this.prisma.anggota.findFirst({
+        where: {
+          satminkalId,
+          OR: [{ nrpNip: user.username }, { id: user.userId }],
+        },
+      });
+      if (anggota) {
+        targetAnggotaId = anggota.id;
+      }
+    }
 
     return this.prisma.$transaction(async (tx) => {
       let totalHargaBarang = 0;
@@ -78,7 +102,7 @@ export class PesananService {
         data: {
           satminkalId,
           nomorPesanan,
-          anggotaId: dto.anggotaId,
+          anggotaId: targetAnggotaId,
           tipePengambilan: dto.tipePengambilan,
           lokasiTujuan: dto.lokasiTujuan,
           namaPetugasPiket: dto.namaPetugasPiket,
@@ -112,10 +136,28 @@ export class PesananService {
       tipePengambilan?: TipePengambilan;
     },
   ) {
+    const satminkalId = this.scopeSatminkal(user);
+    let filterAnggotaId = params?.anggotaId;
+
+    // Jika BUKAN Admin Koperasi atau Kasir Toko (misalnya role Anggota), batasi HANYA pesanan miliknya sendiri
+    if (!this.isStaffRole(user)) {
+      const anggota = await this.prisma.anggota.findFirst({
+        where: {
+          satminkalId,
+          OR: [{ nrpNip: user.username }, { id: user.userId }],
+        },
+      });
+
+      if (!anggota) {
+        return [];
+      }
+      filterAnggotaId = anggota.id;
+    }
+
     return this.prisma.pesananOnline.findMany({
       where: {
-        satminkalId: this.scopeSatminkal(user),
-        ...(params?.anggotaId ? { anggotaId: params.anggotaId } : {}),
+        satminkalId,
+        ...(filterAnggotaId ? { anggotaId: filterAnggotaId } : {}),
         ...(params?.status ? { status: params.status } : {}),
         ...(params?.tipePengambilan
           ? { tipePengambilan: params.tipePengambilan }
@@ -135,12 +177,31 @@ export class PesananService {
     status: StatusPesananOnline,
     petugasPiket?: string,
   ) {
+    const satminkalId = this.scopeSatminkal(user);
     const pesanan = await this.prisma.pesananOnline.findFirst({
-      where: { id, satminkalId: this.scopeSatminkal(user) },
+      where: { id, satminkalId },
+      include: { anggota: true },
     });
 
     if (!pesanan) {
       throw new NotFoundException('Pesanan tidak ditemukan');
+    }
+
+    // Role Anggota hanya boleh memperbarui status pesanannya sendiri (khususnya konfirmasi SELESAI)
+    if (!this.isStaffRole(user)) {
+      if (
+        pesanan.anggota?.nrpNip !== user.username &&
+        pesanan.anggotaId !== user.userId
+      ) {
+        throw new ForbiddenException(
+          'Anda hanya berhak mengonfirmasi status pesanan Anda sendiri',
+        );
+      }
+      if (status !== StatusPesananOnline.SELESAI) {
+        throw new ForbiddenException(
+          'Anggota hanya diizinkan mengonfirmasi penyelesaian pesanan',
+        );
+      }
     }
 
     const now = new Date();
