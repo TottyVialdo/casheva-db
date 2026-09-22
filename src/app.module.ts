@@ -24,12 +24,14 @@ import { MarketplaceModule } from './marketplace/marketplace.module';
 import { GadaiModule } from './gadai/gadai.module';
 import { LoyaltyModule } from './loyalty/loyalty.module';
 import { LaporanTokoModule } from './laporan-toko/laporan-toko.module';
+import { KotamaModule } from './kotama/kotama.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     AuthModule,
+    KotamaModule,
     MasterModule,
     AnggotaModule,
     PinjamanModule,

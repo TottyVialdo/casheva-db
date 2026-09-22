@@ -21,7 +21,7 @@ export class TokoService {
   async createKategori(user: JwtUser, dto: { nama: string; deskripsi?: string }) {
     return this.prisma.kategoriProduk.create({
       data: {
-        satminkalId: this.scopeSatminkal(user),
+        satminkalId: this.scopeSatminkal(user)!,
         nama: dto.nama,
         deskripsi: dto.deskripsi,
       },
@@ -122,7 +122,7 @@ export class TokoService {
     return this.prisma.$transaction(async (tx) => {
       const produk = await tx.produk.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           kodeBarcode: dto.kodeBarcode,
           namaProduk: dto.namaProduk,
           kategoriId: dto.kategoriId,

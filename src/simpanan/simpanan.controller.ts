@@ -18,9 +18,13 @@ export class SimpananController {
   constructor(private readonly simpananService: SimpananService) {}
 
   @Get('rekap')
-  @ApiOperation({ summary: 'Rekap simpanan per anggota aktif (Satminkal)' })
-  rekap(@CurrentUser() user: JwtUser) {
-    return this.simpananService.rekapSatminkal(user);
+  @ApiOperation({ summary: 'Rekap simpanan per anggota aktif (Satminkal / Kotama)' })
+  @ApiQuery({ name: 'satminkalId', required: false, type: String })
+  rekap(
+    @CurrentUser() user: JwtUser,
+    @Query('satminkalId') satminkalId?: string,
+  ) {
+    return this.simpananService.rekapSatminkal(user, satminkalId);
   }
 
   @Get('pengaturan')
@@ -44,12 +48,14 @@ export class SimpananController {
   @ApiOperation({ summary: 'Rekap simpanan bulanan (filter bulan & tahun) untuk ekspor' })
   @ApiQuery({ name: 'bulan', required: true, type: Number })
   @ApiQuery({ name: 'tahun', required: true, type: Number })
+  @ApiQuery({ name: 'satminkalId', required: false, type: String })
   rekapBulanan(
     @CurrentUser() user: JwtUser,
     @Query('bulan') bulan: string,
     @Query('tahun') tahun: string,
+    @Query('satminkalId') satminkalId?: string,
   ) {
-    return this.simpananService.rekapSimpananBulanan(user, +bulan, +tahun);
+    return this.simpananService.rekapSimpananBulanan(user, +bulan, +tahun, satminkalId);
   }
 
   @Get('anggota/:anggotaId')

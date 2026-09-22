@@ -14,12 +14,28 @@ export interface EncryptedBackupBundle {
   appName: string;
   version: string;
   encryptedAt: string;
-  satminkalId: string;
+  scope: 'GLOBAL' | 'KOTAMA' | 'SATMINKAL';
+  scopeTitle: string;
+  satminkalId?: string;
+  kotamaId?: string;
   cipher: 'AES-256-GCM';
   iv: string; // Hex
   authTag: string; // Hex
   checksum: string; // SHA-256 Hex of original JSON
   encryptedData: string; // Base64
+}
+
+export interface UserScopeInfo {
+  scope: 'GLOBAL' | 'KOTAMA' | 'SATMINKAL';
+  scopeTitle: string;
+  kotamaId?: string;
+  kotamaKode?: string;
+  kotamaNama?: string;
+  satminkalId?: string;
+  satminkalKode?: string;
+  satminkalNama?: string;
+  satminkalIds: string[];
+  filePrefix: string;
 }
 
 @Injectable()
@@ -35,7 +51,7 @@ export class BackupService implements OnModuleInit {
     const secret =
       process.env.BACKUP_ENCRYPTION_KEY ||
       process.env.JWT_SECRET ||
-      'Casheva_TNI_AD_2026_Secure_Backup_Master_Key_Secret';
+      'SISKOPAD_TNI_AD_2026_Secure_Backup_Master_Key_Secret';
     this.encryptionKey = crypto.createHash('sha256').update(secret).digest();
 
     // Pastikan direktori backup lokal tersedia
@@ -59,7 +75,12 @@ export class BackupService implements OnModuleInit {
       if (fs.existsSync(this.backupDir)) {
         const files = fs
           .readdirSync(this.backupDir)
-          .filter((f) => f.endsWith('.casheva.enc') || f.endsWith('.json'));
+          .filter(
+            (f) =>
+              f.endsWith('.siskopad.enc') ||
+              f.endsWith('.casheva.enc') ||
+              f.endsWith('.json'),
+          );
         this.totalAutomatedSnapshots = files.length;
         if (files.length > 0) {
           const stats = fs.statSync(path.join(this.backupDir, files[files.length - 1]));
@@ -93,39 +114,187 @@ export class BackupService implements OnModuleInit {
 
   private async checkAndRunMonthlyBackup() {
     const now = new Date();
-    // Jika belum pernah backup atau hari ini adalah tanggal 1
     const shouldBackup =
       !this.lastAutomatedBackup ||
       now.getDate() === 1 ||
       now.getTime() - this.lastAutomatedBackup.getTime() > 30 * 24 * 60 * 60 * 1000;
 
     if (shouldBackup) {
-      const firstSatminkal = await this.prisma.satminkal.findFirst();
-      if (firstSatminkal) {
-        const dummyUser: JwtUser = {
-          userId: 'system-scheduler',
-          username: 'system',
-          role: 'ADMIN_KOPERASI',
-          satminkalId: firstSatminkal.id,
-          kotamaId: firstSatminkal.kotamaId,
-        };
-        const bundle = await this.exportEncryptedData(dummyUser);
-        const fileName = `backup_auto_${firstSatminkal.kode || 'SATKER'}_${now.toISOString().slice(0, 10)}.casheva.enc`;
-        const filePath = path.join(this.backupDir, fileName);
+      const dummyUser: JwtUser = {
+        userId: 'system-scheduler',
+        username: 'system',
+        role: 'SUPER_ADMIN',
+      };
+      const bundle = await this.exportEncryptedData(dummyUser);
+      const fileName = `backup_auto_GLOBAL_${now.toISOString().slice(0, 10)}.siskopad.enc`;
+      const filePath = path.join(this.backupDir, fileName);
 
-        fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf8');
-        this.lastAutomatedBackup = now;
-        this.totalAutomatedSnapshots++;
-        this.logger.log(
-          `✅ [AUTO BACKUP BULANAN] Berhasil membuat snapshot terenkripsi AES-256-GCM: ${fileName}`,
-        );
-      }
+      fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf8');
+      this.lastAutomatedBackup = now;
+      this.totalAutomatedSnapshots++;
+      this.logger.log(
+        `✅ [AUTO BACKUP GLOBAL BULANAN] Berhasil membuat snapshot terenkripsi AES-256-GCM: ${fileName}`,
+      );
     }
   }
 
-  // ========== 1. EXPORT DATA MENTAH ==========
+  // ========== HELPER: RESOLVE USER SCOPE ==========
+  async resolveUserScope(user: JwtUser): Promise<UserScopeInfo> {
+    let roleStr = String(user.role || '').toUpperCase();
+    if (roleStr === 'SUPERADMIN') roleStr = 'SUPER_ADMIN';
+
+    // 1. SUPER ADMIN: Lingkup Global
+    if (roleStr === 'SUPER_ADMIN') {
+      const [allKotama, allSatminkal] = await Promise.all([
+        this.prisma.kotama.findMany({ select: { id: true, kode: true, nama: true } }),
+        this.prisma.satminkal.findMany({ select: { id: true, kode: true, nama: true, kotamaId: true } }),
+      ]);
+      return {
+        scope: 'GLOBAL',
+        scopeTitle: 'Global Mabesad (Seluruh Kotama & Satminkal)',
+        satminkalIds: allSatminkal.map((s) => s.id),
+        filePrefix: 'backup-global-siskopad',
+      };
+    }
+
+    // 2. ADMIN KOTAMA: Lingkup Kotama / Balakpus
+    if (roleStr === 'ADMIN_KOTAMA') {
+      let kotamaId = user.kotamaId;
+      if (!kotamaId && user.userId) {
+        const dbUser = await this.prisma.user.findUnique({
+          where: { id: user.userId },
+          select: { kotamaId: true, satminkalId: true },
+        });
+        kotamaId = dbUser?.kotamaId || undefined;
+        if (!kotamaId && dbUser?.satminkalId) {
+          const dbSat = await this.prisma.satminkal.findUnique({
+            where: { id: dbUser.satminkalId },
+            select: { kotamaId: true },
+          });
+          kotamaId = dbSat?.kotamaId || undefined;
+        }
+      }
+
+      if (!kotamaId && user.satminkalId) {
+        const dbSat = await this.prisma.satminkal.findUnique({
+          where: { id: user.satminkalId },
+          select: { kotamaId: true },
+        });
+        kotamaId = dbSat?.kotamaId || undefined;
+      }
+
+      if (!kotamaId) {
+        const firstKotama = await this.prisma.kotama.findFirst();
+        kotamaId = firstKotama?.id;
+      }
+
+      const kotama = kotamaId
+        ? await this.prisma.kotama.findUnique({ where: { id: kotamaId } })
+        : null;
+
+      const kotamaSatminkals = kotamaId
+        ? await this.prisma.satminkal.findMany({ where: { kotamaId } })
+        : [];
+
+      return {
+        scope: 'KOTAMA',
+        scopeTitle: `Kotama ${kotama?.nama || 'TNI AD'} (${kotamaSatminkals.length} Satminkal)`,
+        kotamaId,
+        kotamaKode: kotama?.kode || 'KOTAMA',
+        kotamaNama: kotama?.nama || 'Kotama',
+        satminkalIds: kotamaSatminkals.map((s) => s.id),
+        filePrefix: `backup-kotama-${kotama?.kode || 'KOTAMA'}`,
+      };
+    }
+
+    // 3. ADMIN KOPERASI / ADMIN SATMINKAL: Lingkup Satminkal
+    let satminkalId = user.satminkalId;
+    if (!satminkalId && user.userId) {
+      const dbUser = await this.prisma.user.findUnique({
+        where: { id: user.userId },
+        select: { satminkalId: true },
+      });
+      satminkalId = dbUser?.satminkalId || undefined;
+    }
+
+    const satminkal = satminkalId
+      ? await this.prisma.satminkal.findUnique({
+          where: { id: satminkalId },
+          include: { kotama: true },
+        })
+      : await this.prisma.satminkal.findFirst({ include: { kotama: true } });
+
+    const activeSatminkalId = satminkal?.id || satminkalId || '';
+    return {
+      scope: 'SATMINKAL',
+      scopeTitle: `Satminkal ${satminkal?.nama || 'Satker'} (${satminkal?.kode || ''})`,
+      satminkalId: activeSatminkalId,
+      satminkalKode: satminkal?.kode || 'SATKER',
+      satminkalNama: satminkal?.nama || 'Satminkal',
+      kotamaNama: satminkal?.kotama?.nama || '',
+      satminkalIds: activeSatminkalId ? [activeSatminkalId] : [],
+      filePrefix: `backup-satminkal-${satminkal?.kode || 'SATKER'}`,
+    };
+  }
+
+  async getBackupFilename(user: JwtUser, ext: 'enc' | 'json' = 'enc'): Promise<string> {
+    const scopeInfo = await this.resolveUserScope(user);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const extension = ext === 'enc' ? 'siskopad.enc' : 'json';
+    return `${scopeInfo.filePrefix}-${dateStr}.${extension}`;
+  }
+
+  // ========== 1. EXPORT DATA MENTAH (SESUAI SCOPE ROLE) ==========
   async exportRawData(user: JwtUser) {
-    const satminkalId = user.satminkalId;
+    const scopeInfo = await this.resolveUserScope(user);
+    const { scope, satminkalIds, kotamaId } = scopeInfo;
+
+    let kotamaWhere: any = undefined;
+    let satminkalWhere: any = undefined;
+    let userWhere: any = undefined;
+    let anggotaWhere: any = undefined;
+    let simpananWhere: any = undefined;
+    let pinjamanWhere: any = undefined;
+    let angsuranWhere: any = undefined;
+    let satminkalEntityWhere: any = undefined;
+
+    if (scope === 'GLOBAL') {
+      // Global: Semua data
+      kotamaWhere = {};
+      satminkalWhere = {};
+      userWhere = {};
+      anggotaWhere = {};
+      simpananWhere = {};
+      pinjamanWhere = {};
+      angsuranWhere = {};
+      satminkalEntityWhere = {};
+    } else if (scope === 'KOTAMA') {
+      // Kotama: Semua satminkal di bawah kotama tsb
+      kotamaWhere = { id: kotamaId };
+      satminkalWhere = { id: { in: satminkalIds } };
+      userWhere = {
+        OR: [
+          { kotamaId },
+          { satminkalId: { in: satminkalIds } },
+        ],
+      };
+      anggotaWhere = { satminkalId: { in: satminkalIds } };
+      simpananWhere = { anggota: { satminkalId: { in: satminkalIds } } };
+      pinjamanWhere = { anggota: { satminkalId: { in: satminkalIds } } };
+      angsuranWhere = { pinjaman: { anggota: { satminkalId: { in: satminkalIds } } } };
+      satminkalEntityWhere = { satminkalId: { in: satminkalIds } };
+    } else {
+      // Satminkal: Hanya 1 satminkal
+      const singleId = satminkalIds[0] || '';
+      kotamaWhere = {};
+      satminkalWhere = { id: singleId };
+      userWhere = { satminkalId: singleId };
+      anggotaWhere = { satminkalId: singleId };
+      simpananWhere = { anggota: { satminkalId: singleId } };
+      pinjamanWhere = { anggota: { satminkalId: singleId } };
+      angsuranWhere = { pinjaman: { anggota: { satminkalId: singleId } } };
+      satminkalEntityWhere = { satminkalId: singleId };
+    }
 
     const [
       kotama,
@@ -153,11 +322,12 @@ export class BackupService implements OnModuleInit {
       eventUndian,
       kuponUndian,
     ] = await Promise.all([
-      this.prisma.kotama.findMany(),
-      this.prisma.satminkal.findMany(),
+      this.prisma.kotama.findMany({ where: kotamaWhere }),
+      this.prisma.satminkal.findMany({ where: satminkalWhere }),
       this.prisma.pangkat.findMany(),
       this.prisma.korps.findMany(),
       this.prisma.user.findMany({
+        where: userWhere,
         select: {
           id: true,
           username: true,
@@ -168,34 +338,37 @@ export class BackupService implements OnModuleInit {
           isActive: true,
         },
       }),
-      this.prisma.anggota.findMany({ where: { satminkalId } }),
-      this.prisma.simpanan.findMany({ where: { anggota: { satminkalId } } }),
-      this.prisma.pinjaman.findMany({ where: { anggota: { satminkalId } } }),
-      this.prisma.angsuran.findMany({
-        where: { pinjaman: { anggota: { satminkalId } } },
-      }),
-      this.prisma.pendapatan.findMany({ where: { satminkalId } }),
-      this.prisma.biayaOperasional.findMany(),
-      this.prisma.kopstuk.findMany({ where: { satminkalId } }),
-      this.prisma.tajukTandaTangan.findMany(),
-      this.prisma.pengaturanKoperasi.findMany({ where: { satminkalId } }),
-      this.prisma.kategoriProduk.findMany({ where: { satminkalId } }),
-      this.prisma.produk.findMany({ where: { satminkalId } }),
-      this.prisma.supplier.findMany({ where: { satminkalId } }),
-      this.prisma.pembelianSupplier.findMany({ where: { satminkalId } }),
-      this.prisma.transaksiPos.findMany({ where: { satminkalId } }),
-      this.prisma.gadaiBarang.findMany({ where: { satminkalId } }),
-      this.prisma.shuAnggota.findMany({ where: { anggota: { satminkalId } } }),
-      this.prisma.poinAnggota.findMany({ where: { anggota: { satminkalId } } }),
-      this.prisma.eventUndian.findMany({ where: { satminkalId } }),
-      this.prisma.kuponUndian.findMany({ where: { anggota: { satminkalId } } }),
+      this.prisma.anggota.findMany({ where: anggotaWhere }),
+      this.prisma.simpanan.findMany({ where: simpananWhere }),
+      this.prisma.pinjaman.findMany({ where: pinjamanWhere }),
+      this.prisma.angsuran.findMany({ where: angsuranWhere }),
+      this.prisma.pendapatan.findMany({ where: satminkalEntityWhere }),
+      this.prisma.biayaOperasional.findMany({ where: satminkalEntityWhere }),
+      this.prisma.kopstuk.findMany({ where: satminkalEntityWhere }),
+      this.prisma.tajukTandaTangan.findMany({ where: satminkalEntityWhere }),
+      this.prisma.pengaturanKoperasi.findMany({ where: satminkalEntityWhere }),
+      this.prisma.kategoriProduk.findMany({ where: satminkalEntityWhere }),
+      this.prisma.produk.findMany({ where: satminkalEntityWhere }),
+      this.prisma.supplier.findMany({ where: satminkalEntityWhere }),
+      this.prisma.pembelianSupplier.findMany({ where: satminkalEntityWhere }),
+      this.prisma.transaksiPos.findMany({ where: satminkalEntityWhere }),
+      this.prisma.gadaiBarang.findMany({ where: satminkalEntityWhere }),
+      this.prisma.shuAnggota.findMany({ where: simpananWhere }),
+      this.prisma.poinAnggota.findMany({ where: simpananWhere }),
+      this.prisma.eventUndian.findMany({ where: satminkalEntityWhere }),
+      this.prisma.kuponUndian.findMany({ where: simpananWhere }),
     ]);
 
     return {
-      appName: 'Casheva Koperasi Simpan Pinjam TNI AD',
-      version: '1.0.0',
+      appName: 'SISKOPAD — Sistem Koperasi TNI Angkatan Darat',
+      version: '2.0.0',
       exportedAt: new Date().toISOString(),
-      satminkalId,
+      scope: scopeInfo.scope,
+      scopeTitle: scopeInfo.scopeTitle,
+      kotamaId: scopeInfo.kotamaId,
+      satminkalId: scopeInfo.satminkalId,
+      totalSatminkal: satminkal.length,
+      totalAnggota: anggota.length,
       data: {
         kotama,
         satminkal,
@@ -227,6 +400,7 @@ export class BackupService implements OnModuleInit {
 
   // ========== 2. ENCRYPTED BACKUP EXPORT (AES-256-GCM) ==========
   async exportEncryptedData(user: JwtUser): Promise<EncryptedBackupBundle> {
+    const scopeInfo = await this.resolveUserScope(user);
     const rawData = await this.exportRawData(user);
     const jsonString = JSON.stringify(rawData);
 
@@ -247,10 +421,13 @@ export class BackupService implements OnModuleInit {
     const authTag = cipher.getAuthTag();
 
     return {
-      appName: 'Casheva Koperasi Simpan Pinjam TNI AD',
-      version: '1.0.0',
+      appName: 'SISKOPAD — Sistem Koperasi TNI Angkatan Darat',
+      version: '2.0.0',
       encryptedAt: new Date().toISOString(),
-      satminkalId: user.satminkalId,
+      scope: scopeInfo.scope,
+      scopeTitle: scopeInfo.scopeTitle,
+      satminkalId: scopeInfo.satminkalId ?? '',
+      kotamaId: scopeInfo.kotamaId ?? '',
       cipher: 'AES-256-GCM',
       iv: iv.toString('hex'),
       authTag: authTag.toString('hex'),
@@ -340,14 +517,20 @@ export class BackupService implements OnModuleInit {
 
     return {
       message: 'Restore data terenkripsi berhasil diverifikasi dan dipulihkan',
+      scope: payload.scope || 'SATMINKAL',
+      scopeTitle: payload.scopeTitle || 'Sistem Terintegrasi',
       totalAnggotaRestored: restoredCount,
       timestamp: new Date().toISOString(),
     };
   }
 
   // ========== 4. STATUS & KESEHATAN CADANGAN DATA ==========
-  async getBackupStatus() {
+  async getBackupStatus(user?: JwtUser) {
     this.scanExistingBackups();
+    let scopeInfo: UserScopeInfo | null = null;
+    if (user) {
+      scopeInfo = await this.resolveUserScope(user);
+    }
     return {
       status: 'AKTIF',
       scheduler: 'Bulanan (Otomatis setiap Tanggal 1 pukul 00:00 WIB)',
@@ -359,25 +542,30 @@ export class BackupService implements OnModuleInit {
         : new Date().toISOString(),
       backupStorageLocation: './backups/ (Tersimpan di Server Aman)',
       isRansomwareProtected: true,
+      scope: scopeInfo?.scope || 'GLOBAL',
+      scopeTitle: scopeInfo?.scopeTitle || 'Global Mabesad',
+      totalSatminkalCovered: scopeInfo?.satminkalIds?.length || 0,
     };
   }
 
   async triggerManualBackup(user: JwtUser) {
     const bundle = await this.exportEncryptedData(user);
-    const now = new Date();
-    const fileName = `backup_manual_${user.satminkalId}_${now.toISOString().slice(0, 10)}.casheva.enc`;
+    const fileName = await this.getBackupFilename(user, 'enc');
     const filePath = path.join(this.backupDir, fileName);
 
     fs.writeFileSync(filePath, JSON.stringify(bundle, null, 2), 'utf8');
-    this.lastAutomatedBackup = now;
+    this.lastAutomatedBackup = new Date();
     this.totalAutomatedSnapshots++;
 
+    const scopeInfo = await this.resolveUserScope(user);
+
     return {
-      message: 'Cadangan database terenkripsi AES-256 berhasil dibuat',
+      message: `Cadangan database terenkripsi AES-256 (${scopeInfo.scopeTitle}) berhasil dibuat`,
       fileName,
-      timestamp: now.toISOString(),
+      scope: scopeInfo.scope,
+      scopeTitle: scopeInfo.scopeTitle,
+      timestamp: new Date().toISOString(),
       bundle,
     };
   }
 }
-

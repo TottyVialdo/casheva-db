@@ -14,16 +14,27 @@ async function bootstrap() {
   app.setGlobalPrefix('api');
 
   // ==========================================
-  // 1. SECURITY HEADERS (Anti-Clickjacking, XSS, MIME Sniffing)
+  // 1. SECURITY HEADERS (HSTS, Anti-Clickjacking, XSS, MIME Sniffing, COOP, CORP, COEP)
   // ==========================================
   app.use((req: any, res: any, next: any) => {
+    res.setHeader(
+      'Strict-Transport-Security',
+      'max-age=63072000; includeSubDomains; preload',
+    );
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-XSS-Protection', '1; mode=block');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader(
       'Permissions-Policy',
-      'camera=(), microphone=(), geolocation=()',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    );
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self' http: https: data: blob: 'unsafe-inline' 'unsafe-eval'; frame-ancestors 'none';",
     );
     res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
     res.removeHeader('X-Powered-By');

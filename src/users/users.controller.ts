@@ -17,11 +17,18 @@ import { Role } from '@prisma/client';
 
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtUser } from '../common/interfaces/jwt-user.interface';
 
 @ApiTags('Users')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN_KOPERASI)
+@Roles(
+  Role.SUPER_ADMIN,
+  Role.ADMIN_KOTAMA,
+  Role.ADMIN_SATMINKAL,
+  Role.ADMIN_KOPERASI,
+)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -34,20 +41,20 @@ export class UsersController {
 
   @ApiOperation({ summary: 'Daftar semua user' })
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@CurrentUser() user: JwtUser) {
+    return this.usersService.findAll(user);
   }
 
   @ApiOperation({ summary: 'Status realtime online/offline seluruh user' })
   @Get('realtime-status')
-  getRealtimeStatus() {
-    return this.usersService.getRealtimeStatus();
+  getRealtimeStatus(@CurrentUser() user: JwtUser) {
+    return this.usersService.getRealtimeStatus(user);
   }
 
   @ApiOperation({ summary: 'Daftar sesi user yang sedang aktif' })
   @Get('active-sessions')
-  getActiveSessions() {
-    return this.usersService.getActiveSessions();
+  getActiveSessions(@CurrentUser() user: JwtUser) {
+    return this.usersService.getActiveSessions(user);
   }
 
   @ApiOperation({ summary: 'Ubah role user secara dinamis (Admin)' })

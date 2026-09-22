@@ -43,13 +43,15 @@ export class PinjamanController {
   // -------------------------------------------------------------
 
   @Get()
-  @ApiOperation({ summary: 'Daftar pinjaman Satminkal' })
+  @ApiOperation({ summary: 'Daftar pinjaman Satminkal / Kotama' })
   @ApiQuery({ name: 'status', required: false, enum: StatusPinjaman })
+  @ApiQuery({ name: 'satminkalId', required: false, type: String })
   findAll(
     @CurrentUser() user: JwtUser,
     @Query('status') status?: StatusPinjaman,
+    @Query('satminkalId') satminkalId?: string,
   ) {
-    return this.pinjamanService.findAll(user, status);
+    return this.pinjamanService.findAll(user, status, satminkalId);
   }
 
   @Post()
@@ -103,13 +105,15 @@ export class PinjamanController {
   @ApiOperation({ summary: 'Rekap angsuran bulanan (filter bulan & tahun) untuk ekspor' })
   @ApiQuery({ name: 'bulan', required: true, type: Number })
   @ApiQuery({ name: 'tahun', required: true, type: Number })
+  @ApiQuery({ name: 'satminkalId', required: false, type: String })
   @ApiResponse({ status: 200, description: 'List angsuran bulanan' })
   rekapAngsuranBulanan(
     @CurrentUser() user: JwtUser,
     @Query('bulan') bulan: string,
     @Query('tahun') tahun: string,
+    @Query('satminkalId') satminkalId?: string,
   ) {
-    return this.pinjamanService.rekapAngsuranBulanan(user, +bulan, +tahun);
+    return this.pinjamanService.rekapAngsuranBulanan(user, +bulan, +tahun, satminkalId);
   }
 
   @Post('angsuran/:angsuranId/bayar')

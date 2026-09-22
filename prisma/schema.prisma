@@ -16,13 +16,17 @@ datasource db {
 // ==========================================
 
 model Kotama {
-  id        String      @id @default(uuid())
-  kode      String      @unique // kd_Kotama
-  nama      String // nm_Kotama
-  satminkal Satminkal[]
-  users     User[]
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id               String             @id @default(uuid())
+  kode             String             @unique // kd_Kotama
+  nama             String // nm_Kotama
+  tipe             String             @default("KOTAMA") // KOTAMA atau BALAKPUS
+  status           Boolean            @default(true)
+  satminkal        Satminkal[]
+  users            User[]
+  kopstuk          Kopstuk[]
+  tajukTandaTangan TajukTandaTangan[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
 
   @@map("tb_kotama")
 }
@@ -31,6 +35,7 @@ model Satminkal {
   id        String    @id @default(uuid())
   kode      String    @unique // kd_Satker
   nama      String // nm_Satker
+  status    Boolean   @default(true)
   kotamaId  String
   kotama    Kotama    @relation(fields: [kotamaId], references: [id])
   users     User[]
@@ -40,6 +45,8 @@ model Satminkal {
   updatedAt DateTime  @updatedAt
 
   pendapatan           Pendapatan[]
+  biayaOperasional     BiayaOperasional[]
+  tajukTandaTangan     TajukTandaTangan[]
   pengaturanKoperasi   PengaturanKoperasi?
   kategoriProduk       KategoriProduk[]
   produk               Produk[]
@@ -90,6 +97,9 @@ enum KategoriPangkat {
 // ==========================================
 
 enum Role {
+  SUPER_ADMIN
+  ADMIN_KOTAMA
+  ADMIN_SATMINKAL
   ADMIN_KOPERASI
   PIMPINAN
   KEPRIM
@@ -107,10 +117,10 @@ model User {
   password            String
   namaLengkap         String
   role                Role           @default(ADMIN_KOPERASI)
-  kotamaId            String
-  kotama              Kotama         @relation(fields: [kotamaId], references: [id])
-  satminkalId         String
-  satminkal           Satminkal      @relation(fields: [satminkalId], references: [id])
+  kotamaId            String?
+  kotama              Kotama?        @relation(fields: [kotamaId], references: [id])
+  satminkalId         String?
+  satminkal           Satminkal?     @relation(fields: [satminkalId], references: [id])
   isActive            Boolean        @default(true)
   currentSessionToken String?
   lastActiveAt        DateTime?
@@ -310,14 +320,17 @@ enum JenisBiayaOperasional {
 }
 
 model BiayaOperasional {
-  id         String                @id @default(uuid())
-  tahun      Int
-  jenis      JenisBiayaOperasional
-  nominal    Decimal               @db.Decimal(18, 2)
-  keterangan String?
-  tanggal    DateTime              @default(now())
-  createdAt  DateTime              @default(now())
+  id          String                @id @default(uuid())
+  satminkalId String?
+  satminkal   Satminkal?            @relation(fields: [satminkalId], references: [id])
+  tahun       Int
+  jenis       JenisBiayaOperasional
+  nominal     Decimal               @db.Decimal(18, 2)
+  keterangan  String?
+  tanggal     DateTime              @default(now())
+  createdAt   DateTime              @default(now())
 
+  @@index([satminkalId])
   @@index([tahun])
 }
 
@@ -363,6 +376,8 @@ model Kopstuk {
   id           String     @id @default(uuid())
   satminkalId  String?    @unique
   satminkal    Satminkal? @relation(fields: [satminkalId], references: [id])
+  kotamaId     String?
+  kotama       Kotama?    @relation(fields: [kotamaId], references: [id])
   namaSatuan   String // Contoh: MARKAS BESAR ANGKATAN DARAT
   namaBalak    String // Contoh: DINAS INFORMASI DAN PENGOLAHAN DATA
   alamat       String?
@@ -370,20 +385,27 @@ model Kopstuk {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
+  @@index([kotamaId])
   @@map("tb_kopstuk")
 }
 
 model TajukTandaTangan {
-  id          String   @id @default(uuid())
+  id          String     @id @default(uuid())
+  satminkalId String?
+  satminkal   Satminkal? @relation(fields: [satminkalId], references: [id])
+  kotamaId    String?
+  kotama      Kotama?    @relation(fields: [kotamaId], references: [id])
   jabatan     String // Contoh: Kasubdistekinfo Selaku Kalakgiat / Kaprimkopad
   namaPejabat String // Contoh: Sigit Suhendro Hadi K., S.T., M.Tr.(Han)
   pangkat     String // Contoh: Kolonel Inf
   nrp         String // Contoh: 11020019460278
-  isAktif     Boolean  @default(true)
+  isAktif     Boolean    @default(true)
   kategori    String? // Contoh: LAPORAN_SHU, KWITANSI, AKAD_KREDIT
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
 
+  @@index([satminkalId])
+  @@index([kotamaId])
   @@map("tb_tajuk_ttd")
 }
 
@@ -846,4 +868,29 @@ model TargetBelanjaBulanan {
   @@unique([satminkalId, bulanTahun])
   @@map("tb_target_belanja_bulanan")
 }
+
+// ==========================================
+// 17. AUDIT LOG & MONITORING AKTIVITAS
+// ==========================================
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  userId      String
+  username    String?
+  role        String?
+  action      String   // LOGIN, LOGOUT, MONITORING_START, MONITORING_END, CREATE_SATMINKAL, UPDATE_SATMINKAL, CREATE_ADMIN, UPDATE_ADMIN, CRUD_DATA
+  targetType  String?  // SATMINKAL, ANGGOTA, USER, DOKUMEN, PINJAMAN, SIMPANAN
+  targetId    String?
+  kotamaId    String?
+  satminkalId String?
+  details     Json?
+  timestamp   DateTime @default(now())
+
+  @@index([userId])
+  @@index([kotamaId])
+  @@index([satminkalId])
+  @@index([timestamp])
+  @@map("tb_audit_log")
+}
+
 

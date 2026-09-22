@@ -24,32 +24,45 @@ export class UsersService {
       throw new ConflictException('Username / NRP sudah digunakan');
     }
 
-    let satminkalId: string | undefined = dto.satminkalId;
-    if (!satminkalId) {
-      const firstSatminkal = await this.prisma.satminkal.findFirst();
-      satminkalId = firstSatminkal?.id;
-    }
-    if (!satminkalId) {
-      throw new NotFoundException('Satminkal tidak ditemukan');
-    }
+    let satminkalId: string | null | undefined = dto.satminkalId;
+    let kotamaId: string | null | undefined = dto.kotamaId;
 
-    let kotamaId: string | undefined = dto.kotamaId;
-    if (!kotamaId) {
-      const satminkal = await this.prisma.satminkal.findUnique({
-        where: { id: satminkalId },
-      });
-      if (satminkal) {
-        kotamaId = satminkal.kotamaId;
+    if (dto.role === Role.SUPER_ADMIN) {
+      kotamaId = null;
+      satminkalId = null;
+    } else if (dto.role === Role.ADMIN_KOTAMA) {
+      satminkalId = null;
+      if (!kotamaId) {
+        const firstKotama = await this.prisma.kotama.findFirst();
+        kotamaId = firstKotama?.id;
       }
-    }
+      if (!kotamaId) throw new NotFoundException('Kotama tidak ditemukan');
+    } else {
+      if (!satminkalId) {
+        const firstSatminkal = await this.prisma.satminkal.findFirst();
+        satminkalId = firstSatminkal?.id;
+      }
+      if (!satminkalId) {
+        throw new NotFoundException('Satminkal tidak ditemukan');
+      }
 
-    if (!kotamaId) {
-      const firstKotama = await this.prisma.kotama.findFirst();
-      kotamaId = firstKotama?.id;
-    }
+      if (!kotamaId) {
+        const satminkal = await this.prisma.satminkal.findUnique({
+          where: { id: satminkalId },
+        });
+        if (satminkal) {
+          kotamaId = satminkal.kotamaId;
+        }
+      }
 
-    if (!kotamaId) {
-      throw new NotFoundException('Kotama tidak ditemukan');
+      if (!kotamaId) {
+        const firstKotama = await this.prisma.kotama.findFirst();
+        kotamaId = firstKotama?.id;
+      }
+
+      if (!kotamaId) {
+        throw new NotFoundException('Kotama tidak ditemukan');
+      }
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, 10);
@@ -60,8 +73,8 @@ export class UsersService {
         password: hashedPassword,
         namaLengkap: dto.namaLengkap.trim(),
         role: dto.role,
-        kotama: { connect: { id: kotamaId } },
-        satminkal: { connect: { id: satminkalId } },
+        ...(kotamaId ? { kotama: { connect: { id: kotamaId } } } : {}),
+        ...(satminkalId ? { satminkal: { connect: { id: satminkalId } } } : {}),
         passwordHistories: {
           create: {
             hash: hashedPassword,
@@ -80,63 +93,85 @@ export class UsersService {
       },
     });
 
-    // Always ensure synchronized Anggota entity exists
-    const nrpNip = dto.nrpNip || username;
-    const existingAnggota = await this.prisma.anggota.findFirst({
-      where: { nrpNip },
-    });
+    // Always ensure synchronized Anggota entity exists for non-SuperAdmin/Kotama users
+    if (satminkalId) {
+      const nrpNip = dto.nrpNip || username;
+      const existingAnggota = await this.prisma.anggota.findFirst({
+        where: { nrpNip },
+      });
 
-    if (!existingAnggota) {
-      let pangkatId = dto.pangkatId;
-      if (!pangkatId) {
-        const firstPangkat = await this.prisma.pangkat.findFirst();
-        pangkatId = firstPangkat?.id;
-      }
+      if (!existingAnggota) {
+        let pangkatId = dto.pangkatId;
+        if (!pangkatId) {
+          const firstPangkat = await this.prisma.pangkat.findFirst();
+          pangkatId = firstPangkat?.id;
+        }
 
-      let korpsId = dto.korpsId;
-      if (!korpsId) {
-        const firstKorps = await this.prisma.korps.findFirst();
-        korpsId = firstKorps?.id;
-      }
+        let korpsId = dto.korpsId;
+        if (!korpsId) {
+          const firstKorps = await this.prisma.korps.findFirst();
+          korpsId = firstKorps?.id;
+        }
 
-      if (pangkatId && korpsId) {
-        await this.prisma.anggota.create({
+        if (pangkatId && korpsId) {
+          await this.prisma.anggota.create({
+            data: {
+              nama: dto.namaLengkap.trim(),
+              nrpNip,
+              pangkatId,
+              korpsId,
+              satminkalId,
+              isAktif: true,
+            },
+          });
+        }
+      } else {
+        // Sync Anggota if already exists
+        await this.prisma.anggota.update({
+          where: { id: existingAnggota.id },
           data: {
             nama: dto.namaLengkap.trim(),
-            nrpNip,
-            pangkatId,
-            korpsId,
-            satminkalId,
             isAktif: true,
+            satminkalId,
+            ...(dto.pangkatId ? { pangkatId: dto.pangkatId } : {}),
+            ...(dto.korpsId && dto.korpsId !== 'NONE' ? { korpsId: dto.korpsId } : {}),
           },
         });
       }
-    } else {
-      // Sync Anggota if already exists
-      await this.prisma.anggota.update({
-        where: { id: existingAnggota.id },
-        data: {
-          nama: dto.namaLengkap.trim(),
-          isAktif: true,
-          satminkalId,
-          ...(dto.pangkatId ? { pangkatId: dto.pangkatId } : {}),
-          ...(dto.korpsId && dto.korpsId !== 'NONE' ? { korpsId: dto.korpsId } : {}),
-        },
-      });
     }
 
     return user;
   }
 
-  async findAll() {
+  async findAll(currentUser?: any) {
+    const where: any = {};
+    if (currentUser) {
+      if (currentUser.role === Role.SUPER_ADMIN) {
+        // Super Admin sees all users across TNI AD
+      } else if (currentUser.role === Role.ADMIN_KOTAMA && currentUser.kotamaId) {
+        where.kotamaId = currentUser.kotamaId;
+      } else if (currentUser.satminkalId) {
+        where.satminkalId = currentUser.satminkalId;
+      }
+    }
+
     const users = await this.prisma.user.findMany({
+      where,
       select: {
         id: true,
         username: true,
         namaLengkap: true,
         role: true,
         kotama: { select: { id: true, kode: true, nama: true } },
-        satminkal: { select: { id: true, kode: true, nama: true } },
+        satminkal: {
+          select: {
+            id: true,
+            kode: true,
+            nama: true,
+            kotamaId: true,
+            kotama: { select: { id: true, kode: true, nama: true } },
+          },
+        },
         isActive: true,
         lastActiveAt: true,
         currentSessionToken: true,
@@ -445,8 +480,20 @@ export class UsersService {
     }
   }
 
-  async getRealtimeStatus() {
+  async getRealtimeStatus(currentUser?: any) {
+    const where: any = {};
+    if (currentUser) {
+      if (currentUser.role === Role.SUPER_ADMIN) {
+        // Super Admin sees all
+      } else if (currentUser.role === Role.ADMIN_KOTAMA && currentUser.kotamaId) {
+        where.kotamaId = currentUser.kotamaId;
+      } else if (currentUser.satminkalId) {
+        where.satminkalId = currentUser.satminkalId;
+      }
+    }
+
     const users = await this.prisma.user.findMany({
+      where,
       select: {
         id: true,
         username: true,
@@ -482,31 +529,56 @@ export class UsersService {
     });
   }
 
-  async getActiveSessions() {
+  async getActiveSessions(currentUser?: any) {
+    const where: any = {
+      isActive: true,
+      currentSessionToken: { not: null },
+    };
+    if (currentUser) {
+      if (currentUser.role === Role.SUPER_ADMIN) {
+        // Super Admin sees all
+      } else if (currentUser.role === Role.ADMIN_KOTAMA && currentUser.kotamaId) {
+        where.kotamaId = currentUser.kotamaId;
+      } else if (currentUser.satminkalId) {
+        where.satminkalId = currentUser.satminkalId;
+      }
+    }
+
     const users = await this.prisma.user.findMany({
-      where: {
-        isActive: true,
-        currentSessionToken: { not: null },
-      },
+      where,
       select: {
         id: true,
         username: true,
         namaLengkap: true,
         role: true,
         lastActiveAt: true,
-        satminkal: { select: { nama: true } },
+        kotama: { select: { id: true, kode: true, nama: true } },
+        satminkal: {
+          select: {
+            id: true,
+            kode: true,
+            nama: true,
+            kotama: { select: { id: true, kode: true, nama: true } },
+          },
+        },
       },
       orderBy: { lastActiveAt: 'desc' },
     });
     const now = Date.now();
     return users.map((u) => {
       const diffMs = u.lastActiveAt ? now - new Date(u.lastActiveAt).getTime() : Infinity;
+      const kotamaObj = u.kotama || u.satminkal?.kotama || null;
       return {
         id: u.id,
         username: u.username,
         namaLengkap: u.namaLengkap,
         role: u.role,
-        satminkal: u.satminkal.nama,
+        kotamaId: kotamaObj?.id ?? null,
+        kotamaKode: kotamaObj?.kode ?? null,
+        kotamaNama: kotamaObj?.nama ?? 'Mabes TNI AD / Pusat',
+        satminkalId: u.satminkal?.id ?? null,
+        satminkalKode: u.satminkal?.kode ?? null,
+        satminkal: u.satminkal?.nama ?? (u.kotama?.nama ? `Kotama (${u.kotama.nama})` : 'Pusat / Super Admin'),
         lastActiveAt: u.lastActiveAt,
         isOnline: diffMs < 1000 * 60 * 5,
         isIdle: diffMs >= 1000 * 60 * 5 && diffMs < 1000 * 60 * 30,

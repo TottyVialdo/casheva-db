@@ -41,7 +41,7 @@ export class SupplierService {
 
     return this.prisma.supplier.create({
       data: {
-        satminkalId,
+        satminkalId: satminkalId!,
         kodeSupplier: kode,
         namaSupplier: dto.namaSupplier,
         kontakPerson: dto.kontakPerson,
@@ -138,7 +138,7 @@ export class SupplierService {
 
       const pembelian = await tx.pembelianSupplier.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           supplierId: dto.supplierId,
           nomorNota: dto.nomorNota,
           tanggalNota: dto.tanggalNota ? new Date(dto.tanggalNota) : new Date(),
@@ -224,7 +224,7 @@ export class SupplierService {
 
       const retur = await tx.returSupplier.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           pembelianId: dto.pembelianId,
           supplierId: dto.supplierId,
           nomorRetur: dto.nomorRetur,

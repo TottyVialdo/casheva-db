@@ -21,7 +21,20 @@ const anggotaInclude = {
 export class AnggotaService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private scopeSatminkal(user: JwtUser) {
+  private scopeSatminkalWhere(user: JwtUser) {
+    if (user.role === Role.SUPER_ADMIN) {
+      return {};
+    }
+    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+      return { satminkal: { kotamaId: user.kotamaId } };
+    }
+    if (user.satminkalId) {
+      return { satminkalId: user.satminkalId };
+    }
+    return {};
+  }
+
+  private scopeSatminkal(user: JwtUser): string | undefined {
     return user.satminkalId;
   }
 
@@ -31,7 +44,7 @@ export class AnggotaService {
 
     const list = await this.prisma.anggota.findMany({
       where: {
-        satminkalId: this.scopeSatminkal(user),
+        ...this.scopeSatminkalWhere(user),
         ...(hanyaAktif === true ? { isAktif: true } : {}),
         ...(isAnggota ? { nrpNip: user.username } : {}),
       },
@@ -69,7 +82,7 @@ export class AnggotaService {
     const row = await this.prisma.anggota.findFirst({
       where: {
         id,
-        satminkalId: this.scopeSatminkal(user),
+        ...this.scopeSatminkalWhere(user),
         ...(isAnggota ? { nrpNip: user.username } : {}),
       },
       include: anggotaInclude,
@@ -113,7 +126,7 @@ export class AnggotaService {
         nrpNip: dto.nrpNip.trim(),
         pangkatId: dto.pangkatId,
         korpsId: dto.korpsId,
-        satminkalId,
+        satminkalId: satminkalId!,
         tmtAnggota: dto.tmtAnggota ? new Date(dto.tmtAnggota) : undefined,
       },
       include: anggotaInclude,

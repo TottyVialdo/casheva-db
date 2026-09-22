@@ -32,12 +32,33 @@ export class SimpananService {
     });
   }
 
-  async rekapSatminkal(user: JwtUser) {
+  private resolveSatminkalScope(user: JwtUser, satminkalIdParam?: string) {
+    if (user.role === Role.SUPER_ADMIN) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return { satminkalId: satminkalIdParam };
+      }
+      return {};
+    }
+    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } };
+      }
+      return { satminkal: { kotamaId: user.kotamaId } };
+    }
+    if (user.satminkalId) {
+      return { satminkalId: user.satminkalId };
+    }
+    return {};
+  }
+
+  async rekapSatminkal(user: JwtUser, satminkalIdParam?: string) {
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user, satminkalIdParam);
+
     const anggota = await this.prisma.anggota.findMany({
       where: {
-        satminkalId: user.satminkalId,
+        ...satminkalScope,
         isAktif: true,
         ...(isAnggota ? { nrpNip: user.username } : {}),
       },
@@ -47,6 +68,7 @@ export class SimpananService {
         satminkal: true,
       },
       orderBy: [
+        { satminkal: { kode: 'asc' } },
         { pangkat: { kodePkt: 'desc' } },
         { nama: 'asc' },
       ],
@@ -231,24 +253,26 @@ export class SimpananService {
 
   // ========== REKAP SIMPANAN BULANAN ==========
 
-  async rekapSimpananBulanan(user: JwtUser, bulan: number, tahun: number) {
+  async rekapSimpananBulanan(user: JwtUser, bulan: number, tahun: number, satminkalIdParam?: string) {
     const startDate = new Date(Date.UTC(tahun, bulan - 1, 1));
     const endDate = new Date(Date.UTC(tahun, bulan, 1));
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user, satminkalIdParam);
 
     const simpananList = await this.prisma.simpanan.findMany({
       where: {
         anggota: {
-          satminkalId: user.satminkalId,
+          ...satminkalScope,
           ...(isAnggota ? { nrpNip: user.username } : {}),
         },
         createdAt: { gte: startDate, lt: endDate },
       },
       include: {
-        anggota: { include: { pangkat: true, korps: true } },
+        anggota: { include: { pangkat: true, korps: true, satminkal: true } },
       },
       orderBy: [
+        { anggota: { satminkal: { kode: 'asc' } } },
         { anggota: { pangkat: { kodePkt: 'desc' } } },
         { anggota: { nama: 'asc' } },
         { createdAt: 'desc' },
@@ -379,11 +403,21 @@ export class SimpananService {
   }
 
   private async assertAnggotaScope(user: JwtUser, anggotaId: string) {
+    let where: any = { id: anggotaId };
+    if (user.role === Role.SUPER_ADMIN) {
+      where = { id: anggotaId };
+    } else if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+      where = { id: anggotaId, satminkal: { kotamaId: user.kotamaId } };
+    } else if (user.satminkalId) {
+      where = { id: anggotaId, satminkalId: user.satminkalId };
+    }
+
     const anggota = await this.prisma.anggota.findFirst({
-      where: { id: anggotaId, satminkalId: user.satminkalId },
+      where,
+      include: { satminkal: true },
     });
     if (!anggota) {
-      throw new NotFoundException('Anggota tidak ditemukan di Satminkal Anda');
+      throw new NotFoundException('Anggota tidak ditemukan di Satminkal / Kotama Anda');
     }
     if ((user.role === Role.ANGGOTA || (user.role as any) === 'Anggota') && anggota.nrpNip !== user.username) {
       throw new BadRequestException('Anda hanya diizinkan mengakses data akun Anda sendiri');

@@ -100,7 +100,7 @@ export class PesananService {
 
       const pesanan = await tx.pesananOnline.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           nomorPesanan,
           anggotaId: targetAnggotaId,
           tipePengambilan: dto.tipePengambilan,
