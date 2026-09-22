@@ -78,19 +78,41 @@ const PLAFOND_MAKS: Record<KategoriPangkat, number> = {
 export class PinjamanService {
   constructor(private readonly prisma: PrismaService) {}
 
-  findAll(user: JwtUser, status?: StatusPinjaman) {
+  private resolveSatminkalScope(user: JwtUser, satminkalIdParam?: string) {
+    if (user.role === Role.SUPER_ADMIN) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return { satminkalId: satminkalIdParam };
+      }
+      return {};
+    }
+    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } };
+      }
+      return { satminkal: { kotamaId: user.kotamaId } };
+    }
+    if (user.satminkalId) {
+      return { satminkalId: user.satminkalId };
+    }
+    return {};
+  }
+
+  findAll(user: JwtUser, status?: StatusPinjaman, satminkalIdParam?: string) {
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user, satminkalIdParam);
+
     return this.prisma.pinjaman.findMany({
       where: {
         anggota: {
-          satminkalId: user.satminkalId,
+          ...satminkalScope,
           ...(isAnggota ? { nrpNip: user.username } : {}),
         },
         ...(status ? { status } : {}),
       },
       include: pinjamanInclude,
       orderBy: [
+        { anggota: { satminkal: { kode: 'asc' } } },
         { anggota: { pangkat: { kodePkt: 'desc' } } },
         { anggota: { nama: 'asc' } },
         { tanggalAjuan: 'desc' },
@@ -163,17 +185,18 @@ export class PinjamanService {
   }
 
   // Rekap angsuran bulanan untuk ekspor
-  async rekapAngsuranBulanan(user: JwtUser, bulan: number, tahun: number) {
+  async rekapAngsuranBulanan(user: JwtUser, bulan: number, tahun: number, satminkalIdParam?: string) {
     const startDate = new Date(Date.UTC(tahun, bulan - 1, 1));
     const endDate = new Date(Date.UTC(tahun, bulan, 1));
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user, satminkalIdParam);
 
     const angsuranList = await this.prisma.angsuran.findMany({
       where: {
         pinjaman: {
           anggota: {
-            satminkalId: user.satminkalId,
+            ...satminkalScope,
             ...(isAnggota ? { nrpNip: user.username } : {}),
           },
         },
@@ -187,6 +210,7 @@ export class PinjamanService {
         },
       },
       orderBy: [
+        { pinjaman: { anggota: { satminkal: { kode: 'asc' } } } },
         { pinjaman: { anggota: { pangkat: { kodePkt: 'desc' } } } },
         { pinjaman: { anggota: { nama: 'asc' } } },
         { jatuhTempo: 'asc' },
@@ -242,7 +266,7 @@ export class PinjamanService {
       const setting = await tx.pengaturanKoperasi.upsert({
         where: { satminkalId: user.satminkalId },
         create: {
-          satminkalId: user.satminkalId,
+          satminkalId: user.satminkalId!,
           bungaPinjamanPersenTahun: decimal(dto.bungaPersenTahun),
         },
         update: {
@@ -252,7 +276,7 @@ export class PinjamanService {
 
       await tx.riwayatBunga.create({
         data: {
-          satminkalId: user.satminkalId,
+          satminkalId: user.satminkalId!,
           bungaPersenTahun: decimal(dto.bungaPersenTahun),
           keterangan: dto.keterangan ?? 'Perubahan suku bunga pinjaman',
           diubahOlehId: user.userId,
@@ -502,7 +526,7 @@ export class PinjamanService {
     });
     const tahun = new Date().getFullYear();
     const noInvoice = await this.generateInvoice(
-      user.satminkalId,
+      user.satminkalId!,
       satminkal.kode,
       tahun,
     );
@@ -578,7 +602,7 @@ export class PinjamanService {
     const tahun = tglPelunasan.getFullYear();
 
     const noInvoice = await this.generateInvoice(
-      user.satminkalId,
+      user.satminkalId!,
       satminkal.kode,
       tahun,
     );
@@ -774,7 +798,7 @@ export class PinjamanService {
       where: { id: user.satminkalId },
     });
     const noInvoice = await this.generateInvoice(
-      user.satminkalId,
+      user.satminkalId!,
       satminkal.kode,
       tahun,
     );

@@ -81,7 +81,7 @@ export class GadaiService {
 
       const gadai = await tx.gadaiBarang.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           nomorSbg,
           anggotaId: dto.anggotaId,
           kategori: dto.kategori,

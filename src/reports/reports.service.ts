@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JwtUser } from '../common/interfaces/jwt-user.interface';
 import { hitungJadwalAngsuran } from '../common/utils/pinjaman-calculator';
 import { toNumber } from '../common/utils/decimal.util';
-import { StatusPinjaman } from '@prisma/client';
+import { Role, StatusPinjaman } from '@prisma/client';
 
 export function formatPktCrpNrpDinas(
   pangkatNama: string,
@@ -55,33 +55,114 @@ export function formatPangkatDinas(
 }
 
 export function formatSatminkalDinas(nama?: string | null): string {
-  if (!nama) return 'INFOLAHTADAM IV/DIP';
-  if (nama.includes('DIPONEGORO') || nama.includes('INFOLAHTADAM')) return 'INFOLAHTADAM IV/DIP';
-  return nama;
+  if (!nama) return '-';
+  return nama
+    .replace(/DIPONEGORO/gi, 'DIP')
+    .replace(/BRAWIJAYA/gi, 'BRW')
+    .replace(/BUKIT BARISAN/gi, 'BB')
+    .replace(/SRIWIJAYA/gi, 'SWJ')
+    .replace(/SILIWANGI/gi, 'SLW')
+    .replace(/MULAWARMAN/gi, 'MLW')
+    .replace(/UDAYANA/gi, 'UDY')
+    .replace(/TANJUNGPURA/gi, 'TPR')
+    .replace(/MERDEKA/gi, 'MDK')
+    .replace(/HASANUDDIN/gi, 'HND')
+    .replace(/PATTIMURA/gi, 'PTM')
+    .replace(/CENDERAWASIH/gi, 'CEN')
+    .replace(/KASUARI/gi, 'KSR')
+    .trim();
 }
 
 @Injectable()
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async getKopstukAndTajuk(satminkalId: string, kategoriTtd?: string) {
-    const kopstuk = await this.prisma.kopstuk.findFirst({
-      where: { satminkalId },
-    });
+  private resolveScope(user: JwtUser, satminkalIdParam?: string): {
+    satminkalWhere: any;
+    effectiveSatminkalId?: string;
+    effectiveKotamaId?: string;
+  } {
+    if (user.role === Role.SUPER_ADMIN) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return { satminkalWhere: { satminkalId: satminkalIdParam }, effectiveSatminkalId: satminkalIdParam };
+      }
+      return { satminkalWhere: {}, effectiveKotamaId: user.kotamaId || undefined };
+    }
 
-    const tajuk = await this.prisma.tajukTandaTangan.findFirst({
-      where: {
-        isAktif: true,
-        ...(kategoriTtd ? { kategori: kategoriTtd } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+        return {
+          satminkalWhere: { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } },
+          effectiveSatminkalId: satminkalIdParam,
+          effectiveKotamaId: user.kotamaId,
+        };
+      }
+      return {
+        satminkalWhere: { satminkal: { kotamaId: user.kotamaId } },
+        effectiveKotamaId: user.kotamaId,
+      };
+    }
+
+    if (user.satminkalId) {
+      return {
+        satminkalWhere: { satminkalId: user.satminkalId },
+        effectiveSatminkalId: user.satminkalId,
+        effectiveKotamaId: user.kotamaId || undefined,
+      };
+    }
+
+    return { satminkalWhere: {} };
+  }
+
+  private async getKopstukAndTajuk(satminkalId?: string, kotamaId?: string, kategoriTtd?: string) {
+    let kopstuk: any = null;
+    if (satminkalId) {
+      kopstuk = await this.prisma.kopstuk.findFirst({ where: { satminkalId } });
+    }
+    if (!kopstuk && kotamaId) {
+      kopstuk = await this.prisma.kopstuk.findFirst({ where: { kotamaId } });
+    }
+    if (!kopstuk) {
+      kopstuk = await this.prisma.kopstuk.findFirst({ orderBy: { createdAt: 'asc' } });
+    }
+
+    let tajuk: any = null;
+    if (satminkalId) {
+      tajuk = await this.prisma.tajukTandaTangan.findFirst({
+        where: {
+          satminkalId,
+          isAktif: true,
+          ...(kategoriTtd ? { kategori: kategoriTtd } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (!tajuk && kotamaId) {
+      tajuk = await this.prisma.tajukTandaTangan.findFirst({
+        where: {
+          kotamaId,
+          isAktif: true,
+          ...(kategoriTtd ? { kategori: kategoriTtd } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    if (!tajuk) {
+      tajuk = await this.prisma.tajukTandaTangan.findFirst({
+        where: {
+          isAktif: true,
+          ...(kategoriTtd ? { kategori: kategoriTtd } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+    }
 
     return {
       kopstuk: kopstuk
         ? {
             id: kopstuk.id,
             satminkalId: kopstuk.satminkalId,
+            kotamaId: kopstuk.kotamaId,
             namaSatuan: kopstuk.namaSatuan,
             namaBalak: kopstuk.namaBalak,
             alamat: kopstuk.alamat || 'Jl. Perintis Kemerdekaan, Watugong, Semarang',
@@ -121,12 +202,12 @@ export class ReportsService {
   }
 
   // 1. Data Anggota Koperasi (Lampiran II)
-  async getReportAnggota(user: JwtUser) {
-    const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId);
+  async getReportAnggota(user: JwtUser, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId);
 
     const anggota = await this.prisma.anggota.findMany({
-      where: { satminkalId },
+      where: satminkalWhere,
       include: {
         pangkat: true,
         korps: true,
@@ -136,6 +217,13 @@ export class ReportsService {
         { pangkat: { kodePkt: 'desc' } },
         { nama: 'asc' },
       ],
+    });
+
+    anggota.sort((a, b) => {
+      const kodeA = a.pangkat?.kodePkt ?? 0;
+      const kodeB = b.pangkat?.kodePkt ?? 0;
+      if (kodeB !== kodeA) return kodeB - kodeA;
+      return (a.nama || '').localeCompare(b.nama || '', 'id-ID');
     });
 
     return {
@@ -148,7 +236,6 @@ export class ReportsService {
         const pktCrpNrp = formatPktCrpNrpDinas(a.pangkat.nama, a.korps.nama, a.pangkat.kategori, a.nrpNip);
         const formattedPkt = formatPangkatDinas(a.pangkat.nama, a.korps.nama, a.pangkat.kategori);
 
-        // TMT anggota dari dibuat/ditambahkannya dia ke anggota koperasi
         const tmtDate = a.tmtAnggota || a.createdAt || new Date();
         const tmtStr = new Date(tmtDate).toISOString().slice(0, 10);
 
@@ -177,28 +264,24 @@ export class ReportsService {
     };
   }
 
-  // 2. Brosur Pinjaman (Lampiran III) — Rp 1.000.000 s/d Rp 100.000.000 (1..36 Bulan)
+  // 2. Brosur Pinjaman (Lampiran III)
   async getBrosurPinjaman() {
-    // 100 nominals: 1.000.000 s/d 100.000.000 (kelipatan 1 juta)
     const nominalList: number[] = [];
     for (let i = 1; i <= 100; i++) {
       nominalList.push(i * 1_000_000);
     }
 
-    // Tenor 1 s.d 36 bulan
     const tenors: number[] = [];
     for (let t = 1; t <= 36; t++) {
       tenors.push(t);
     }
 
-    // Function to calculate exact installment for nominal N & tenor T
     const hitungAngsuranBrosur = (nominal: number, tenor: number): number => {
       const pokok = Math.round(nominal / tenor);
-      const bunga = Math.round(nominal * 0.01); // 1% flat per bulan (12% per tahun)
+      const bunga = Math.round(nominal * 0.01);
       return pokok + bunga;
     };
 
-    // Matrix per tenor (1..36)
     const matrix = tenors.map((tenor) => {
       const row: Record<string, number> = { tenor, bulan: tenor };
       for (const nom of nominalList) {
@@ -207,11 +290,10 @@ export class ReportsService {
       return row;
     });
 
-    // 10 Halaman (10 kolom per halaman: 1-10jt, 11-20jt, ..., 91-100jt)
     const pages: any[] = [];
     for (let p = 0; p < 10; p++) {
-      const startNom = p * 10 + 1; // 1, 11, 21, ...
-      const endNom = (p + 1) * 10; // 10, 20, 30, ...
+      const startNom = p * 10 + 1;
+      const endNom = (p + 1) * 10;
       const pageNominals = nominalList.slice(p * 10, (p + 1) * 10);
       const title = `BROSUR PINJAMAN PRIMKOP (Rp. ${(startNom).toLocaleString('id-ID')}.000.000 - Rp. ${(endNom).toLocaleString('id-ID')}.000.000)`;
 
@@ -245,12 +327,12 @@ export class ReportsService {
   }
 
   // 3. Rekap Simpanan Anggota (Lampiran IV)
-  async getRekapSimpanan(user: JwtUser) {
-    const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId);
+  async getRekapSimpanan(user: JwtUser, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId);
 
     const anggotaList = await this.prisma.anggota.findMany({
-      where: { satminkalId, isAktif: true },
+      where: { ...satminkalWhere, isAktif: true },
       include: { pangkat: true, korps: true, satminkal: true },
       orderBy: [
         { pangkat: { kodePkt: 'desc' } },
@@ -258,8 +340,16 @@ export class ReportsService {
       ],
     });
 
+    anggotaList.sort((a, b) => {
+      const kodeA = a.pangkat?.kodePkt ?? 0;
+      const kodeB = b.pangkat?.kodePkt ?? 0;
+      if (kodeB !== kodeA) return kodeB - kodeA;
+      return (a.nama || '').localeCompare(b.nama || '', 'id-ID');
+    });
+
+    const memberIds = anggotaList.map((a) => a.id);
     const simpananRows = await this.prisma.simpanan.findMany({
-      where: { anggota: { satminkalId } },
+      where: { anggotaId: { in: memberIds } },
       select: { anggotaId: true, jenis: true, tipe: true, nominal: true },
     });
 
@@ -347,14 +437,14 @@ export class ReportsService {
   }
 
   // 4. Data Anggota Meminjam (Lampiran V)
-  async getPinjamanAnggota(user: JwtUser, tahun?: number) {
-    const satminkalId = user.satminkalId;
+  async getPinjamanAnggota(user: JwtUser, tahun?: number, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
     const targetTahun = tahun || new Date().getFullYear();
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId);
 
     const pinjamanList = await this.prisma.pinjaman.findMany({
       where: {
-        anggota: { satminkalId },
+        anggota: satminkalWhere,
         ...(tahun
           ? {
               OR: [
@@ -380,10 +470,17 @@ export class ReportsService {
         },
       },
       orderBy: [
+        { anggota: { pangkat: { kodePkt: 'desc' } } },
+        { anggota: { nama: 'asc' } },
         { tanggalCair: 'asc' },
-        { tanggalAjuan: 'asc' },
-        { createdAt: 'asc' },
       ],
+    });
+
+    pinjamanList.sort((a, b) => {
+      const kodeA = a.anggota?.pangkat?.kodePkt ?? 0;
+      const kodeB = b.anggota?.pangkat?.kodePkt ?? 0;
+      if (kodeB !== kodeA) return kodeB - kodeA;
+      return (a.anggota?.nama || '').localeCompare(b.anggota?.nama || '', 'id-ID');
     });
 
     let totalPinjaman = 0;
@@ -463,9 +560,9 @@ export class ReportsService {
   }
 
   // 5. Resume / Akad Kredit (Lampiran VI)
-  async getAkadKredit(user: JwtUser, pinjamanId?: string) {
-    const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId, 'AKAD_KREDIT');
+  async getAkadKredit(user: JwtUser, pinjamanId?: string, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId, 'AKAD_KREDIT');
 
     let pinjaman: any = null;
     if (pinjamanId && pinjamanId !== 'default' && pinjamanId !== 'first') {
@@ -480,7 +577,7 @@ export class ReportsService {
 
     if (!pinjaman) {
       pinjaman = await this.prisma.pinjaman.findFirst({
-        where: satminkalId ? { anggota: { satminkalId } } : {},
+        where: { anggota: satminkalWhere },
         include: {
           anggota: { include: { pangkat: true, korps: true, satminkal: true } },
           angsuran: { orderBy: { bulanKe: 'asc' } },
@@ -500,7 +597,6 @@ export class ReportsService {
     }
 
     if (!pinjaman) {
-      // Fallback only if database has 0 members/loans at all
       const nominal = 10_000_000;
       const tenor = 10;
       const bulanNames = ['Mar 2025', 'Apr 2025', 'Mei 2025', 'Jun 2025', 'Jul 2025', 'Agu 2025', 'Sep 2025', 'Okt 2025', 'Nov 2025', 'Des 2025'];
@@ -577,7 +673,6 @@ export class ReportsService {
     const bulanIndo = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 
     const jadwal: any[] = [];
-    // Baris 0: Plafon Awal
     jadwal.push({
       periode: 0,
       bulan: '-',
@@ -593,92 +688,84 @@ export class ReportsService {
     });
 
     let sisa = nominal;
-    const angsuranPokokPerBulan = Math.round(nominal / tenor);
-    const bungaPersenTahun = toNumber(pinjaman.bungaPersenTahun) || 12;
-    const bungaPerBulan = Math.round((nominal * bungaPersenTahun) / 1200);
+    let sumPokok = 0;
+    let sumBunga = 0;
 
     for (let b = 1; b <= tenor; b++) {
-      const existingAngsuran = (pinjaman.angsuran || []).find((a: any) => a.bulanKe === b);
-      const pVal = existingAngsuran ? toNumber(existingAngsuran.pokok) : angsuranPokokPerBulan;
-      const bVal = existingAngsuran ? toNumber(existingAngsuran.bunga) : bungaPerBulan;
-      const totVal = existingAngsuran ? toNumber(existingAngsuran.total) : pVal + bVal;
-      
-      sisa = b === tenor ? 0 : Math.max(0, sisa - pVal);
+      const curMonthDate = new Date(tglCair.getFullYear(), tglCair.getMonth() + b, 1);
+      const bNama = bulanIndo[curMonthDate.getMonth()];
+      const bTahun = curMonthDate.getFullYear();
+      const labelBulan = `${bNama} ${bTahun}`;
 
-      let bName = '';
-      if (existingAngsuran && existingAngsuran.jatuhTempo) {
-        const jTempo = new Date(existingAngsuran.jatuhTempo);
-        bName = `${bulanIndo[jTempo.getMonth()]} ${jTempo.getFullYear()}`;
-      } else {
-        const futureDate = new Date(tglCair.getFullYear(), tglCair.getMonth() + b, 1);
-        bName = `${bulanIndo[futureDate.getMonth()]} ${futureDate.getFullYear()}`;
-      }
+      const existingAngsuran = pinjaman.angsuran?.find((a: any) => a.bulanKe === b);
 
-      const isDibayar = existingAngsuran ? existingAngsuran.dibayar : false;
+      const pokok = existingAngsuran ? toNumber(existingAngsuran.pokok) : Math.round(nominal / tenor);
+      const bunga = existingAngsuran ? toNumber(existingAngsuran.bunga) : Math.round(nominal * 0.01);
+      const total = existingAngsuran ? toNumber(existingAngsuran.total) : pokok + bunga;
+      const dibayar = existingAngsuran ? !!existingAngsuran.dibayar : false;
+
+      sisa = b === tenor ? 0 : Math.max(0, sisa - pokok);
+      sumPokok += pokok;
+      sumBunga += bunga;
 
       jadwal.push({
         periode: b,
-        bulan: bName,
-        pokok: pVal,
-        angsuranPokok: pVal,
-        bunga: bVal,
-        angsuranBunga: bVal,
-        angsuranPerBulan: totVal,
+        bulan: labelBulan,
+        pokok,
+        angsuranPokok: pokok,
+        bunga,
+        angsuranBunga: bunga,
+        angsuranPerBulan: total,
         sisaPinjaman: sisa,
-        dibayar: isDibayar,
-        keterangan: isDibayar ? 'diangsur' : '',
+        dibayar,
+        keterangan: dibayar ? 'diangsur' : '',
         paraf: '',
       });
     }
 
-    const totalPokok = nominal;
-    const totalBunga = jadwal.slice(1).reduce((s, r) => s + r.bunga, 0);
-    const totalAngsuran = totalPokok + totalBunga;
-
     const pktCrpNrp = formatPktCrpNrpDinas(
-      pinjaman.anggota?.pangkat?.nama || '',
-      pinjaman.anggota?.korps?.nama || '',
-      pinjaman.anggota?.pangkat?.kategori || '',
-      pinjaman.anggota?.nrpNip || '',
+      pinjaman.anggota.pangkat.nama,
+      pinjaman.anggota.korps.nama,
+      pinjaman.anggota.pangkat.kategori,
+      pinjaman.anggota.nrpNip,
     );
-
-    const userPhone = pinjaman.anggota?.nrpNip ? `08${pinjaman.anggota.nrpNip.slice(-9).padStart(9, '0')}` : '081390411711';
 
     return {
       title: 'RESUME / AKAD KREDIT',
       ...headerInfo,
       debitur: {
-        nama: pinjaman.anggota?.nama || 'Anggota',
+        nama: pinjaman.anggota.nama,
         pangkatKorpsNrp: pktCrpNrp,
-        jabatan: pinjaman.anggota?.pangkat?.kategori || 'Anggota Koperasi',
-        kesatuan: formatSatminkalDinas(pinjaman.anggota?.satminkal?.nama),
-        telpHp: userPhone,
-        alamat: 'Jl. Perintis Kemerdekaan',
+        jabatan: pinjaman.anggota.pangkat.nama,
+        kesatuan: pinjaman.anggota.satminkal?.nama || '',
+        telpHp: '081390411711',
+        alamat: 'Jl. Perintis Kemerdekaan, Watugong, Semarang',
       },
       pinjaman: {
+        id: pinjaman.id,
         plafonPinjaman: nominal,
         jangkaWaktuBulan: tenor,
-        sukuBungaTahunan: bungaPersenTahun,
-        sukuBungaBulanan: Math.round((bungaPersenTahun / 12) * 100) / 100,
-        angsuranPerBulan: jadwal[1]?.angsuranPerBulan || (angsuranPokokPerBulan + bungaPerBulan),
+        sukuBungaTahunan: 12,
+        sukuBungaBulanan: 1,
+        angsuranPerBulan: Math.round(nominal / tenor + nominal * 0.01),
         tanggalPeminjaman: tglPinjamFormatted,
       },
       jadwal,
-      totalPokok,
-      totalBunga,
-      totalAngsuran,
+      totalPokok: sumPokok,
+      totalBunga: sumBunga,
+      totalAngsuran: sumPokok + sumBunga,
     };
   }
 
   // 6. Kwitansi / Invoice (Lampiran VII)
   async getKwitansi(user: JwtUser, angsuranId?: string) {
     const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId, 'KWITANSI');
+    const headerInfo = await this.getKopstukAndTajuk(satminkalId);
 
     let angsuran: any = null;
     if (angsuranId && angsuranId !== 'default' && angsuranId !== 'first') {
-      angsuran = await this.prisma.angsuran.findFirst({
-        where: { id: angsuranId, pinjaman: { anggota: { satminkalId } } },
+      angsuran = await this.prisma.angsuran.findUnique({
+        where: { id: angsuranId },
         include: {
           pinjaman: {
             include: {
@@ -691,7 +778,7 @@ export class ReportsService {
 
     if (!angsuran) {
       angsuran = await this.prisma.angsuran.findFirst({
-        where: { pinjaman: { anggota: { satminkalId } } },
+        where: satminkalId ? { pinjaman: { anggota: { satminkalId } } } : {},
         include: {
           pinjaman: {
             include: {
@@ -704,7 +791,6 @@ export class ReportsService {
     }
 
     if (!angsuran) {
-      // Fallback dummy for accurate display
       return {
         title: 'KWITANSI / INVOICE',
         ...headerInfo,
@@ -784,22 +870,20 @@ export class ReportsService {
   }
 
   // 7. Rekap Kwitansi Bulanan (Lampiran VIII)
-  async getRekapKwitansiBulanan(user: JwtUser, tahun?: number, bulan?: number) {
-    const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId);
+  async getRekapKwitansiBulanan(user: JwtUser, tahun?: number, bulan?: number, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId);
 
     const targetTahun = tahun || 2025;
-    const targetBulan = bulan || 5; // Mei
+    const targetBulan = bulan || 5;
 
     const bulanIndoFull = ['JANUARI', 'FEBRUARI', 'MARET', 'APRIL', 'MEI', 'JUNI', 'JULI', 'AGUSTUS', 'SEPTEMBER', 'OKTOBER', 'NOVEMBER', 'DESEMBER'];
     const namaBulanStr = bulanIndoFull[targetBulan - 1] || 'MEI';
 
-    const whereClause: any = {
-      pinjaman: { anggota: { satminkalId } },
-    };
-
     const angsuranList = await this.prisma.angsuran.findMany({
-      where: whereClause,
+      where: {
+        pinjaman: { anggota: satminkalWhere },
+      },
       include: {
         pinjaman: {
           include: {
@@ -809,8 +893,16 @@ export class ReportsService {
       },
       orderBy: [
         { pinjaman: { anggota: { pangkat: { kodePkt: 'desc' } } } },
+        { pinjaman: { anggota: { nama: 'asc' } } },
         { jatuhTempo: 'asc' },
       ],
+    });
+
+    angsuranList.sort((a, b) => {
+      const kodeA = a.pinjaman?.anggota?.pangkat?.kodePkt ?? 0;
+      const kodeB = b.pinjaman?.anggota?.pangkat?.kodePkt ?? 0;
+      if (kodeB !== kodeA) return kodeB - kodeA;
+      return (a.pinjaman?.anggota?.nama || '').localeCompare(b.pinjaman?.anggota?.nama || '', 'id-ID');
     });
 
     const data = angsuranList.map((a, i) => {
@@ -860,14 +952,14 @@ export class ReportsService {
   }
 
   // 8. SHU Anggota (Lampiran IX)
-  async getShuAnggota(user: JwtUser, tahun: number) {
-    const satminkalId = user.satminkalId;
-    const headerInfo = await this.getKopstukAndTajuk(satminkalId, 'LAPORAN_SHU');
+  async getShuAnggota(user: JwtUser, tahun: number, satminkalIdParam?: string) {
+    const { satminkalWhere, effectiveSatminkalId, effectiveKotamaId } = this.resolveScope(user, satminkalIdParam);
+    const headerInfo = await this.getKopstukAndTajuk(effectiveSatminkalId, effectiveKotamaId, 'LAPORAN_SHU');
 
     const targetTahun = tahun || new Date().getFullYear();
 
     const anggotaList = await this.prisma.anggota.findMany({
-      where: { satminkalId, isAktif: true },
+      where: { ...satminkalWhere, isAktif: true },
       include: {
         pangkat: true,
         korps: true,
@@ -885,7 +977,13 @@ export class ReportsService {
       ],
     });
 
-    // Kalkulasi SHU per anggota
+    anggotaList.sort((a, b) => {
+      const kodeA = a.pangkat?.kodePkt ?? 0;
+      const kodeB = b.pangkat?.kodePkt ?? 0;
+      if (kodeB !== kodeA) return kodeB - kodeA;
+      return (a.nama || '').localeCompare(b.nama || '', 'id-ID');
+    });
+
     let totalGlobalSimpanan = 0;
     let totalGlobalPinjaman = 0;
     let totalGlobalShuModal = 0;
@@ -900,7 +998,6 @@ export class ReportsService {
 
       const totPinjaman = a.pinjaman.reduce((acc, curr) => acc + Number(curr.nominal), 0) || 10_000_000;
 
-      // Dummy realistic proportion if not closed
       const shuModal = Math.round(totSimpanan * 0.05) || 150_000;
       const shuUsaha = Math.round(totPinjaman * 0.025) || 250_000;
       const totalShu = shuModal + shuUsaha;

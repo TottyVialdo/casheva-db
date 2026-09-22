@@ -18,7 +18,7 @@ export class AuthService {
 
     let user = await this.prisma.user.findUnique({
       where: { username: inputIdentifier },
-      include: { kotama: true, satminkal: true },
+      include: { kotama: true, satminkal: { include: { kotama: true } } },
     });
 
     // If user not found by username, check if it's an Anggota NRP/NIP
@@ -41,7 +41,7 @@ export class AuthService {
             satminkalId: anggota.satminkalId,
           },
           update: {},
-          include: { kotama: true, satminkal: true },
+          include: { kotama: true, satminkal: { include: { kotama: true } } },
         });
       }
     }
@@ -52,36 +52,39 @@ export class AuthService {
       );
     }
 
-    const isPasswordValid = await bcrypt.compare(dto.password, user.password);
+    const currentUser = user;
+
+    const isPasswordValid = await bcrypt.compare(dto.password, currentUser.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('NRP / Username atau password salah.');
     }
 
     // Enrich and synchronize official military display name from Anggota
     const anggota = await this.prisma.anggota.findFirst({
-      where: { nrpNip: user.username },
+      where: { nrpNip: currentUser.username },
       include: { pangkat: true, korps: true },
     });
 
-    let displayNama = user.namaLengkap;
+    let displayNama = currentUser.namaLengkap;
     if (anggota) {
       const pNama = anggota.pangkat?.nama ? `${anggota.pangkat.nama} ` : '';
       const kNama = (anggota.korps?.nama && anggota.korps.nama !== '-') ? `${anggota.korps.nama} ` : '';
       displayNama = `${pNama}${kNama}${anggota.nama}`.trim();
 
-      if (displayNama && user.namaLengkap !== displayNama) {
+      if (displayNama && currentUser.namaLengkap !== displayNama) {
         user = await this.prisma.user.update({
-          where: { id: user.id },
+          where: { id: currentUser.id },
           data: { namaLengkap: displayNama },
-          include: { kotama: true, satminkal: true },
+          include: { kotama: true, satminkal: { include: { kotama: true } } },
         });
       }
     }
 
+    const finalUser = user || currentUser;
     const sessionToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
     await this.prisma.user.update({
-      where: { id: user.id },
+      where: { id: finalUser.id },
       data: {
         currentSessionToken: sessionToken,
         lastActiveAt: new Date(),
@@ -89,12 +92,12 @@ export class AuthService {
     });
 
     const payload = {
-      sub: user.id,
-      username: user.username,
+      sub: finalUser.id,
+      username: finalUser.username,
       namaLengkap: displayNama,
-      role: user.role,
-      kotamaId: user.kotamaId,
-      satminkalId: user.satminkalId,
+      role: finalUser.role,
+      kotamaId: finalUser.kotamaId,
+      satminkalId: finalUser.satminkalId,
       sessionToken,
     };
 
@@ -102,11 +105,13 @@ export class AuthService {
       message: 'Login berhasil',
       accessToken: this.jwtService.sign(payload),
       user: {
-        id: user.id,
+        id: finalUser.id,
         namaLengkap: displayNama,
-        role: user.role,
-        kotama: user.kotama?.nama ?? null,
-        satminkal: user.satminkal?.nama ?? null,
+        role: finalUser.role,
+        kotama: finalUser.kotama?.nama ?? finalUser.satminkal?.kotama?.nama ?? 'KODAM IV/DIPONEGORO',
+        satminkal: finalUser.satminkal?.nama ?? (finalUser.role === Role.ADMIN_KOTAMA ? (finalUser.kotama?.nama ?? 'KODAM IV/DIPONEGORO') : 'INFOLAHTADAM IV/DIPONEGORO'),
+        kotamaId: finalUser.kotamaId ?? finalUser.satminkal?.kotamaId ?? null,
+        satminkalId: finalUser.satminkalId,
       },
     };
   }
@@ -114,7 +119,7 @@ export class AuthService {
   async getProfile(user: JwtUser) {
     const dbUser = await this.prisma.user.findUnique({
       where: { id: user.userId },
-      include: { kotama: true, satminkal: true },
+      include: { kotama: true, satminkal: { include: { kotama: true } } },
     });
     if (!dbUser) return user;
 
@@ -135,9 +140,9 @@ export class AuthService {
       username: dbUser.username,
       namaLengkap: displayNama,
       role: dbUser.role,
-      kotama: dbUser.kotama?.nama ?? null,
-      satminkal: dbUser.satminkal?.nama ?? null,
-      kotamaId: dbUser.kotamaId,
+      kotama: dbUser.kotama?.nama ?? dbUser.satminkal?.kotama?.nama ?? 'KODAM IV/DIPONEGORO',
+      satminkal: dbUser.satminkal?.nama ?? (dbUser.role === Role.ADMIN_KOTAMA ? (dbUser.kotama?.nama ?? 'KODAM IV/DIPONEGORO') : 'INFOLAHTADAM IV/DIPONEGORO'),
+      kotamaId: dbUser.kotamaId ?? dbUser.satminkal?.kotamaId ?? null,
       satminkalId: dbUser.satminkalId,
     };
   }

@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -28,4 +28,20 @@ export class DashboardController {
     const t = tahun ? parseInt(tahun, 10) : undefined;
     return this.dashboardService.getCharts(user, t);
   }
+
+  @Get('kotama')
+  @ApiOperation({ summary: 'Mendapatkan data agregat seluruh Satminkal dalam Kotama' })
+  getKotamaSummary(@CurrentUser() user: JwtUser) {
+    return this.dashboardService.getKotamaSummary(user);
+  }
+
+  @Get('kotama/:kotamaId')
+  @ApiOperation({ summary: 'Mendapatkan data agregat Satminkal berdasarkan Kotama ID tertentu' })
+  getKotamaSummaryById(
+    @CurrentUser() user: JwtUser,
+    @Param('kotamaId') kotamaId: string,
+  ) {
+    return this.dashboardService.getKotamaSummary(user, kotamaId);
+  }
 }
+

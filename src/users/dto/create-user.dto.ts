@@ -25,9 +25,9 @@ export class CreateUserDto {
   @IsString()
   kotamaId?: string;
 
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  satminkalId!: string;
+  satminkalId?: string;
 
   @IsOptional()
   @IsString()

@@ -164,7 +164,7 @@ export class PosService {
       // 5. Buat Transaksi POS
       const transaksi = await tx.transaksiPos.create({
         data: {
-          satminkalId,
+          satminkalId: satminkalId!,
           nomorInvoice,
           kasirId: user.userId,
           anggotaId: dto.anggotaId,

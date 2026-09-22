@@ -25,7 +25,7 @@ export class LoyaltyService {
     const targetSetting = await this.prisma.targetBelanjaBulanan.findUnique({
       where: {
         satminkalId_bulanTahun: {
-          satminkalId: this.scopeSatminkal(user),
+          satminkalId: this.scopeSatminkal(user)!,
           bulanTahun,
         },
       },
@@ -87,7 +87,7 @@ export class LoyaltyService {
   ) {
     return this.prisma.eventUndian.create({
       data: {
-        satminkalId: this.scopeSatminkal(user),
+        satminkalId: this.scopeSatminkal(user)!,
         namaEvent: dto.namaEvent,
         hadiahUtama: dto.hadiahUtama,
         poinPerKupon: dto.poinPerKupon || 50,

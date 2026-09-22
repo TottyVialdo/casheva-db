@@ -19,25 +19,30 @@ import { BackupService, type EncryptedBackupBundle } from './backup.service';
 @ApiTags('Backup & Restore')
 @ApiBearerAuth('JWT-auth')
 @UseGuards(AuthGuard('jwt'), RolesGuard)
-@Roles(Role.ADMIN_KOPERASI)
+@Roles(
+  Role.ADMIN_KOPERASI,
+  Role.ADMIN_KOTAMA,
+  Role.SUPER_ADMIN,
+  Role.ADMIN_SATMINKAL,
+)
 @Controller('backup')
 export class BackupController {
   constructor(private readonly backupService: BackupService) {}
 
   @Get('status')
   @ApiOperation({ summary: 'Status & riwayat jadwal cadangan data otomatis terenkripsi' })
-  async getStatus() {
-    return this.backupService.getBackupStatus();
+  async getStatus(@CurrentUser() user: JwtUser) {
+    return this.backupService.getBackupStatus(user);
   }
 
   @Get('export-encrypted')
-  @ApiOperation({ summary: 'Unduh file cadangan database terenkripsi AES-256-GCM (.casheva.enc)' })
+  @ApiOperation({ summary: 'Unduh file cadangan database terenkripsi AES-256-GCM (.siskopad.enc)' })
   async exportEncryptedData(@CurrentUser() user: JwtUser, @Res() res: Response) {
     const bundle = await this.backupService.exportEncryptedData(user);
-    const filename = `backup-koperasi-${user.satminkalId}-${new Date().toISOString().slice(0, 10)}.casheva.enc`;
+    const filename = await this.backupService.getBackupFilename(user, 'enc');
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(JSON.stringify(bundle, null, 2));
   }
 
@@ -51,10 +56,10 @@ export class BackupController {
   @ApiOperation({ summary: 'Ekspor database backup dalam format JSON mentah' })
   async exportData(@CurrentUser() user: JwtUser, @Res() res: Response) {
     const backupJson = await this.backupService.exportRawData(user);
-    const filename = `backup-koperasi-${user.satminkalId}-${new Date().toISOString().slice(0, 10)}.json`;
+    const filename = await this.backupService.getBackupFilename(user, 'json');
 
     res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     return res.send(JSON.stringify(backupJson, null, 2));
   }
 
@@ -67,4 +72,3 @@ export class BackupController {
     return this.backupService.restoreEncryptedData(user, payload as EncryptedBackupBundle);
   }
 }
-

@@ -43,7 +43,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Akun Anda telah dinonaktifkan.');
     }
 
+    const enforceSingleDevice =
+      process.env.STRICT_SINGLE_DEVICE === 'true';
     if (
+      enforceSingleDevice &&
       payload.sessionToken &&
       user.currentSessionToken &&
       payload.sessionToken !== user.currentSessionToken

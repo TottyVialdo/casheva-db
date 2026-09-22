@@ -31,7 +31,7 @@ export class MarketplaceService {
 
     return this.prisma.pengajuanMarketplace.create({
       data: {
-        satminkalId,
+        satminkalId: satminkalId!,
         anggotaId: dto.anggotaId,
         namaProduk: dto.namaProduk,
         kategori: dto.kategori,
@@ -110,7 +110,7 @@ export class MarketplaceService {
 
         await tx.produk.create({
           data: {
-            satminkalId,
+            satminkalId: satminkalId!,
             kodeBarcode: barcode,
             namaProduk: `[UMKM] ${pengajuan.namaProduk}`,
             satuanKecil: 'Pcs',

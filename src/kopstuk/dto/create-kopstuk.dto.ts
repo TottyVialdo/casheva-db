@@ -1,17 +1,29 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class CreateKopstukDto {
   @IsOptional()
   @IsString()
   satminkalId?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  namaSatuan!: string;
+  namaSatuan?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  namaBalak!: string;
+  namaBalak?: string;
+
+  @IsOptional()
+  @IsString()
+  baris1?: string;
+
+  @IsOptional()
+  @IsString()
+  baris2?: string;
+
+  @IsOptional()
+  @IsString()
+  baris3?: string;
 
   @IsOptional()
   @IsString()
@@ -20,4 +32,16 @@ export class CreateKopstukDto {
   @IsOptional()
   @IsString()
   nomorTelepon?: string;
+
+  @IsOptional()
+  @IsString()
+  logoUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  garisGanda?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  showLogo?: boolean;
 }
