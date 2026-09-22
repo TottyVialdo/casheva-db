@@ -22,14 +22,14 @@ export class AnggotaService {
   constructor(private readonly prisma: PrismaService) {}
 
   private scopeSatminkalWhere(user: JwtUser) {
-    if (user.role === Role.SUPER_ADMIN) {
-      return {};
-    }
-    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
-      return { satminkal: { kotamaId: user.kotamaId } };
-    }
     if (user.satminkalId) {
       return { satminkalId: user.satminkalId };
+    }
+    if (user.kotamaId) {
+      return { satminkal: { kotamaId: user.kotamaId } };
+    }
+    if (user.role === Role.SUPER_ADMIN) {
+      return {};
     }
     return {};
   }

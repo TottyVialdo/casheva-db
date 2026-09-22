@@ -168,15 +168,39 @@ export class DashboardService {
       }
     }
 
-    // ========== SUMMARY KOPERASI / PENGURUS (Admin, Bendahara, Keprim, dll.) ==========
+    return this.getSummaryKoperasi(user, currentYear);
+  }
+
+  private resolveDashboardScope(user: JwtUser) {
+    if (user.satminkalId) {
+      return {
+        anggotaWhere: { satminkalId: user.satminkalId },
+        satminkalId: user.satminkalId,
+      };
+    }
+    if (user.kotamaId) {
+      return {
+        anggotaWhere: { satminkal: { kotamaId: user.kotamaId } },
+        kotamaId: user.kotamaId,
+      };
+    }
+    return {
+      anggotaWhere: {},
+    };
+  }
+
+  // ========== SUMMARY KOPERASI / PENGURUS (Admin, Bendahara, Keprim, dll.) ==========
+  private async getSummaryKoperasi(user: JwtUser, currentYear: number) {
+    const { anggotaWhere, satminkalId, kotamaId } = this.resolveDashboardScope(user);
+
     // 1. Total Anggota Aktif
     const totalAnggota = await this.prisma.anggota.count({
-      where: { satminkalId, isAktif: true },
+      where: { ...anggotaWhere, isAktif: true },
     });
 
     // 2. Total Simpanan
     const simpananRows = await this.prisma.simpanan.findMany({
-      where: { anggota: { satminkalId } },
+      where: { anggota: anggotaWhere },
       select: { tipe: true, nominal: true },
     });
     const totalSimpanan = simpananRows.reduce((acc, row) => {
@@ -187,7 +211,7 @@ export class DashboardService {
     // 3. Total Pinjaman (Akumulasi disetujui / dicairkan)
     const pinjamanList = await this.prisma.pinjaman.findMany({
       where: {
-        anggota: { satminkalId },
+        anggota: anggotaWhere,
         status: { notIn: [StatusPinjaman.DITOLAK, StatusPinjaman.DIAJUKAN] },
       },
       select: { nominal: true, status: true, sisaPokok: true },
@@ -209,11 +233,25 @@ export class DashboardService {
 
     // 5. Pendapatan & Biaya Tahun Berjalan -> SHU Tahun Berjalan
     const aggregatePendapatan = await this.prisma.pendapatan.aggregate({
-      where: { satminkalId, tahun: currentYear },
+      where: {
+        ...(satminkalId
+          ? { satminkalId }
+          : kotamaId
+            ? { satminkal: { kotamaId } }
+            : {}),
+        tahun: currentYear,
+      },
       _sum: { nominal: true },
     });
     const aggregateBiaya = await this.prisma.biayaOperasional.aggregate({
-      where: { tahun: currentYear },
+      where: {
+        ...(satminkalId
+          ? { satminkalId }
+          : kotamaId
+            ? { satminkal: { kotamaId } }
+            : {}),
+        tahun: currentYear,
+      },
       _sum: { nominal: true },
     });
 
@@ -224,7 +262,7 @@ export class DashboardService {
     // 6. Estimasi Kas Koperasi (Kas = Simpanan + Angsuran Dibayar - Pinjaman Dicairkan + Pendapatan - Biaya Operasional)
     const totalAngsuranDibayarAgg = await this.prisma.angsuran.aggregate({
       where: {
-        pinjaman: { anggota: { satminkalId } },
+        pinjaman: { anggota: anggotaWhere },
         dibayar: true,
       },
       _sum: { total: true },
@@ -233,7 +271,7 @@ export class DashboardService {
 
     const totalPencairanAgg = await this.prisma.pinjaman.aggregate({
       where: {
-        anggota: { satminkalId },
+        anggota: anggotaWhere,
         status: { in: [StatusPinjaman.DICAIRKAN, StatusPinjaman.LUNAS] },
       },
       _sum: { nominal: true },
@@ -258,7 +296,7 @@ export class DashboardService {
 
   async getCharts(user: JwtUser, tahun?: number) {
     const targetYear = tahun || new Date().getFullYear();
-    const satminkalId = user.satminkalId;
+    const { anggotaWhere } = this.resolveDashboardScope(user);
     const isAnggota =
       user.role === 'ANGGOTA' || (user.role as any) === 'Anggota';
 
@@ -281,7 +319,7 @@ export class DashboardService {
     const simpananList = await this.prisma.simpanan.findMany({
       where: {
         anggota: {
-          satminkalId,
+          ...anggotaWhere,
           ...(isAnggota ? { nrpNip: user.username } : {}),
         },
         createdAt: {
@@ -296,7 +334,7 @@ export class DashboardService {
     const pinjamanList = await this.prisma.pinjaman.findMany({
       where: {
         anggota: {
-          satminkalId,
+          ...anggotaWhere,
           ...(isAnggota ? { nrpNip: user.username } : {}),
         },
         tanggalCair: {
@@ -313,7 +351,7 @@ export class DashboardService {
       where: {
         pinjaman: {
           anggota: {
-            satminkalId,
+            ...anggotaWhere,
             ...(isAnggota ? { nrpNip: user.username } : {}),
           },
         },

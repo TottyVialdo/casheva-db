@@ -58,8 +58,12 @@ export class KotamaController {
   @Get('satminkal')
   @Roles(Role.ADMIN_KOTAMA, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Daftar Satminkal di bawah Kotama beserta status admin realtime' })
-  getSatminkalList(@CurrentUser() user: JwtUser) {
-    return this.kotamaService.getSatminkalList(user);
+  @ApiQuery({ name: 'kotamaId', required: false, type: String })
+  getSatminkalList(
+    @CurrentUser() user: JwtUser,
+    @Query('kotamaId') kotamaId?: string,
+  ) {
+    return this.kotamaService.getSatminkalList(user, kotamaId);
   }
 
   @Post('satminkal')

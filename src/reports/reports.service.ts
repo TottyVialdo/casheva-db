@@ -82,33 +82,38 @@ export class ReportsService {
     effectiveSatminkalId?: string;
     effectiveKotamaId?: string;
   } {
-    if (user.role === Role.SUPER_ADMIN) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
-        return { satminkalWhere: { satminkalId: satminkalIdParam }, effectiveSatminkalId: satminkalIdParam };
-      }
-      return { satminkalWhere: {}, effectiveKotamaId: user.kotamaId || undefined };
-    }
+    const targetSatminkal =
+      satminkalIdParam && satminkalIdParam !== 'ALL'
+        ? satminkalIdParam
+        : user.satminkalId;
 
-    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
+    if (targetSatminkal) {
+      if (user.kotamaId) {
         return {
-          satminkalWhere: { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } },
-          effectiveSatminkalId: satminkalIdParam,
+          satminkalWhere: {
+            satminkalId: targetSatminkal,
+            satminkal: { kotamaId: user.kotamaId },
+          },
+          effectiveSatminkalId: targetSatminkal,
           effectiveKotamaId: user.kotamaId,
         };
       }
+      return {
+        satminkalWhere: { satminkalId: targetSatminkal },
+        effectiveSatminkalId: targetSatminkal,
+        effectiveKotamaId: user.kotamaId || undefined,
+      };
+    }
+
+    if (user.kotamaId) {
       return {
         satminkalWhere: { satminkal: { kotamaId: user.kotamaId } },
         effectiveKotamaId: user.kotamaId,
       };
     }
 
-    if (user.satminkalId) {
-      return {
-        satminkalWhere: { satminkalId: user.satminkalId },
-        effectiveSatminkalId: user.satminkalId,
-        effectiveKotamaId: user.kotamaId || undefined,
-      };
+    if (user.role === Role.SUPER_ADMIN) {
+      return { satminkalWhere: {} };
     }
 
     return { satminkalWhere: {} };

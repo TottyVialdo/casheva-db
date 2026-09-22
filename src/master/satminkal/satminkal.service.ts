@@ -14,11 +14,11 @@ export class SatminkalService {
       ...(kotamaKode ? { kotama: { kode: kotamaKode } } : {}),
     };
 
-    if (user && !all && user.role !== Role.SUPER_ADMIN) {
-      if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
-        where.kotamaId = user.kotamaId;
-      } else if (user.satminkalId) {
+    if (user && !all) {
+      if (user.satminkalId) {
         where.id = user.satminkalId;
+      } else if (user.kotamaId) {
+        where.kotamaId = user.kotamaId;
       }
     }
 

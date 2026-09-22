@@ -309,19 +309,25 @@ export class KotamaService {
   }
 
   // 3. SATMINKAL LIST & MANAGEMENT (Sesuai Poin 2 & 38-39 pengembangan admin kotama balakpus.md)
-  async getSatminkalList(user: JwtUser) {
-    const targetKotamaId = this.getEffectiveKotamaId(user);
+  async getSatminkalList(user: JwtUser, kotamaIdParam?: string) {
+    let targetKotamaId = this.getEffectiveKotamaId(user, kotamaIdParam);
+
+    if (!targetKotamaId && user.role === Role.SUPER_ADMIN && kotamaIdParam) {
+      targetKotamaId = kotamaIdParam;
+    }
+
     const satminkals = await this.prisma.satminkal.findMany({
-      where: { kotamaId: targetKotamaId },
-      orderBy: { kode: 'asc' },
+      where: targetKotamaId ? { kotamaId: targetKotamaId, status: true } : { status: true },
+      orderBy: [{ kotama: { kode: 'asc' } }, { kode: 'asc' }],
       include: {
         kotama: { select: { id: true, kode: true, nama: true } },
       },
     });
 
     const now = Date.now();
+    const currentYear = new Date().getFullYear();
     const users = await this.prisma.user.findMany({
-      where: { kotamaId: targetKotamaId, isActive: true },
+      where: targetKotamaId ? { kotamaId: targetKotamaId, isActive: true } : { isActive: true },
       select: {
         id: true,
         username: true,
@@ -334,13 +340,87 @@ export class KotamaService {
 
     return Promise.all(
       satminkals.map(async (sat) => {
+        const satId = sat.id;
+
+        // 1. Total Anggota Aktif
         const totalAnggota = await this.prisma.anggota.count({
-          where: { satminkalId: sat.id, isAktif: true },
+          where: { satminkalId: satId, isAktif: true },
         });
 
+        // 2. Total Simpanan (Setor - Tarik)
+        const simpananRows = await this.prisma.simpanan.findMany({
+          where: { anggota: { satminkalId: satId } },
+          select: { tipe: true, nominal: true },
+        });
+        const totalSimpanan = simpananRows.reduce((acc, row) => {
+          const val = toNumber(row.nominal);
+          return row.tipe === 'SETOR' ? acc + val : acc - val;
+        }, 0);
+
+        // 3. Total Pinjaman & Pinjaman Berjalan (Pinjaman Aktif)
+        const pinjamanList = await this.prisma.pinjaman.findMany({
+          where: {
+            anggota: { satminkalId: satId },
+            status: { notIn: [StatusPinjaman.DITOLAK, StatusPinjaman.DIAJUKAN] },
+          },
+          select: { nominal: true, status: true, sisaPokok: true },
+        });
+        const totalPinjaman = pinjamanList.reduce(
+          (acc, p) => acc + toNumber(p.nominal),
+          0,
+        );
+        const pinjamanBerjalanRows = pinjamanList.filter(
+          (p) => p.status === StatusPinjaman.DICAIRKAN,
+        );
+        const pinjamanBerjalan = pinjamanBerjalanRows.reduce(
+          (acc, p) => acc + toNumber(p.sisaPokok ?? p.nominal),
+          0,
+        );
+        const countPinjamanBerjalan = pinjamanBerjalanRows.length;
+
+        // 4. SHU Tahun Berjalan
+        const aggregatePendapatan = await this.prisma.pendapatan.aggregate({
+          where: { satminkalId: satId, tahun: currentYear },
+          _sum: { nominal: true },
+        });
+        const aggregateBiaya = await this.prisma.biayaOperasional.aggregate({
+          where: {
+            OR: [{ satminkalId: satId }, { satminkalId: null }],
+            tahun: currentYear,
+          },
+          _sum: { nominal: true },
+        });
+
+        const totalPendapatanYear = toNumber(aggregatePendapatan._sum.nominal ?? 0);
+        const totalBiayaYear = toNumber(aggregateBiaya._sum.nominal ?? 0);
+        const estimasiShu = Math.max(0, totalPendapatanYear - totalBiayaYear);
+
+        // 5. Kas Koperasi
+        const totalAngsuranDibayarAgg = await this.prisma.angsuran.aggregate({
+          where: {
+            pinjaman: { anggota: { satminkalId: satId } },
+            dibayar: true,
+          },
+          _sum: { total: true },
+        });
+        const totalAngsuranDibayar = toNumber(totalAngsuranDibayarAgg._sum.total ?? 0);
+
+        const totalPencairanAgg = await this.prisma.pinjaman.aggregate({
+          where: {
+            anggota: { satminkalId: satId },
+            status: { in: [StatusPinjaman.DICAIRKAN, StatusPinjaman.LUNAS] },
+          },
+          _sum: { nominal: true },
+        });
+        const totalPencairan = toNumber(totalPencairanAgg._sum.nominal ?? 0);
+
+        const kasKoperasi =
+          totalSimpanan + totalAngsuranDibayar - totalPencairan - totalBiayaYear;
+
+        // Admin Satminkal Info & Online Status
         const adminUser = users.find(
           (u) =>
-            u.satminkalId === sat.id &&
+            u.satminkalId === satId &&
             (u.role === Role.ADMIN_SATMINKAL || u.role === Role.ADMIN_KOPERASI),
         );
 
@@ -353,8 +433,20 @@ export class KotamaService {
         }
 
         return {
-          ...sat,
+          id: sat.id,
+          kode: sat.kode,
+          nama: sat.nama,
+          status: sat.status,
+          kotamaId: sat.kotamaId,
+          kotama: sat.kotama,
           totalAnggota,
+          totalSimpanan,
+          totalPinjaman,
+          pinjamanBerjalan,
+          countPinjamanBerjalan,
+          estimasiShu,
+          kasKoperasi,
+          kinerja: 'SEHAT (A)',
           admin: adminUser
             ? {
                 id: adminUser.id,

@@ -79,21 +79,29 @@ export class PinjamanService {
   constructor(private readonly prisma: PrismaService) {}
 
   private resolveSatminkalScope(user: JwtUser, satminkalIdParam?: string) {
-    if (user.role === Role.SUPER_ADMIN) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
-        return { satminkalId: satminkalIdParam };
+    const targetSatminkal =
+      satminkalIdParam && satminkalIdParam !== 'ALL'
+        ? satminkalIdParam
+        : user.satminkalId;
+
+    if (targetSatminkal) {
+      if (user.kotamaId) {
+        return {
+          satminkalId: targetSatminkal,
+          satminkal: { kotamaId: user.kotamaId },
+        };
       }
-      return {};
+      return { satminkalId: targetSatminkal };
     }
-    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
-        return { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } };
-      }
+
+    if (user.kotamaId) {
       return { satminkal: { kotamaId: user.kotamaId } };
     }
-    if (user.satminkalId) {
-      return { satminkalId: user.satminkalId };
+
+    if (user.role === Role.SUPER_ADMIN) {
+      return {};
     }
+
     return {};
   }
 

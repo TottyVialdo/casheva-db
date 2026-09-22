@@ -33,21 +33,29 @@ export class SimpananService {
   }
 
   private resolveSatminkalScope(user: JwtUser, satminkalIdParam?: string) {
-    if (user.role === Role.SUPER_ADMIN) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
-        return { satminkalId: satminkalIdParam };
+    const targetSatminkal =
+      satminkalIdParam && satminkalIdParam !== 'ALL'
+        ? satminkalIdParam
+        : user.satminkalId;
+
+    if (targetSatminkal) {
+      if (user.kotamaId) {
+        return {
+          satminkalId: targetSatminkal,
+          satminkal: { kotamaId: user.kotamaId },
+        };
       }
-      return {};
+      return { satminkalId: targetSatminkal };
     }
-    if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
-      if (satminkalIdParam && satminkalIdParam !== 'ALL') {
-        return { satminkalId: satminkalIdParam, satminkal: { kotamaId: user.kotamaId } };
-      }
+
+    if (user.kotamaId) {
       return { satminkal: { kotamaId: user.kotamaId } };
     }
-    if (user.satminkalId) {
-      return { satminkalId: user.satminkalId };
+
+    if (user.role === Role.SUPER_ADMIN) {
+      return {};
     }
+
     return {};
   }
 
@@ -404,12 +412,20 @@ export class SimpananService {
 
   private async assertAnggotaScope(user: JwtUser, anggotaId: string) {
     let where: any = { id: anggotaId };
-    if (user.role === Role.SUPER_ADMIN) {
-      where = { id: anggotaId };
-    } else if (user.role === Role.ADMIN_KOTAMA && user.kotamaId) {
+    if (user.satminkalId) {
+      if (user.kotamaId) {
+        where = {
+          id: anggotaId,
+          satminkalId: user.satminkalId,
+          satminkal: { kotamaId: user.kotamaId },
+        };
+      } else {
+        where = { id: anggotaId, satminkalId: user.satminkalId };
+      }
+    } else if (user.kotamaId) {
       where = { id: anggotaId, satminkal: { kotamaId: user.kotamaId } };
-    } else if (user.satminkalId) {
-      where = { id: anggotaId, satminkalId: user.satminkalId };
+    } else if (user.role === Role.SUPER_ADMIN) {
+      where = { id: anggotaId };
     }
 
     const anggota = await this.prisma.anggota.findFirst({
