@@ -30,13 +30,20 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: secret,
+      passReqToCallback: true,
     });
   }
 
-  async validate(payload: JwtPayload) {
+  async validate(req: any, payload: JwtPayload) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: { id: true, currentSessionToken: true, isActive: true },
+      select: {
+        id: true,
+        currentSessionToken: true,
+        isActive: true,
+        kotamaId: true,
+        satminkalId: true,
+      },
     });
 
     if (!user || !user.isActive) {
@@ -63,13 +70,39 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       })
       .catch(() => {});
 
+    // Check for custom header during guest monitoring mode (Admin Kotama / Super Admin)
+    const rawSatminkalHeader =
+      req?.headers?.['satminkal-id'] || req?.headers?.['x-satminkal-id'];
+    const satminkalHeader = Array.isArray(rawSatminkalHeader)
+      ? rawSatminkalHeader[0]
+      : rawSatminkalHeader;
+
+    const rawKotamaHeader =
+      req?.headers?.['kotama-id'] || req?.headers?.['x-kotama-id'];
+    const kotamaHeader = Array.isArray(rawKotamaHeader)
+      ? rawKotamaHeader[0]
+      : rawKotamaHeader;
+
+    let effectiveSatminkalId = payload.satminkalId;
+    if (
+      satminkalHeader &&
+      (payload.role === 'ADMIN_KOTAMA' || payload.role === 'SUPER_ADMIN')
+    ) {
+      effectiveSatminkalId = satminkalHeader;
+    }
+
+    let effectiveKotamaId = payload.kotamaId;
+    if (kotamaHeader && payload.role === 'SUPER_ADMIN') {
+      effectiveKotamaId = kotamaHeader;
+    }
+
     return {
       id: payload.sub,
       userId: payload.sub,
       username: payload.username,
       role: payload.role,
-      kotamaId: payload.kotamaId,
-      satminkalId: payload.satminkalId,
+      kotamaId: effectiveKotamaId,
+      satminkalId: effectiveSatminkalId,
     };
   }
 }
