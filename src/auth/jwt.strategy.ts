@@ -50,16 +50,14 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Akun Anda telah dinonaktifkan.');
     }
 
-    const enforceSingleDevice =
-      process.env.STRICT_SINGLE_DEVICE === 'true';
+    // STRICT SINGLE DEVICE & FORCE LOGOUT ENFORCEMENT:
+    // If the token has a sessionToken, but DB sessionToken is null (force logout) or different (new device login), reject immediately!
     if (
-      enforceSingleDevice &&
       payload.sessionToken &&
-      user.currentSessionToken &&
-      payload.sessionToken !== user.currentSessionToken
+      (!user.currentSessionToken || payload.sessionToken !== user.currentSessionToken)
     ) {
       throw new UnauthorizedException(
-        'Akun Anda sedang digunakan di perangkat lain.',
+        'SESSION_CONCURRENT_CONFLICT: Sesi Anda telah dihentikan oleh Admin atau akun sedang digunakan di perangkat lain.',
       );
     }
 

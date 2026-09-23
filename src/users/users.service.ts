@@ -589,7 +589,10 @@ export class UsersService {
   async terminateSession(id: string) {
     await this.prisma.user.update({
       where: { id },
-      data: { currentSessionToken: null },
+      data: {
+        currentSessionToken: null,
+        lastActiveAt: null,
+      },
     });
     return { message: 'Sesi berhasil diakhiri' };
   }

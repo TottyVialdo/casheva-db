@@ -81,6 +81,14 @@ export class AuthService {
     }
 
     const finalUser = user || currentUser;
+
+    // Detect if account had an active session on another device
+    const wasActiveOnAnotherDevice = Boolean(
+      finalUser.currentSessionToken &&
+      finalUser.lastActiveAt &&
+      (new Date().getTime() - new Date(finalUser.lastActiveAt).getTime()) < 24 * 60 * 60 * 1000
+    );
+
     const sessionToken = Math.random().toString(36).substring(2) + Date.now().toString(36);
 
     await this.prisma.user.update({
@@ -103,6 +111,7 @@ export class AuthService {
 
     return {
       message: 'Login berhasil',
+      wasActiveOnAnotherDevice,
       accessToken: this.jwtService.sign(payload),
       user: {
         id: finalUser.id,
@@ -114,6 +123,19 @@ export class AuthService {
         satminkalId: finalUser.satminkalId,
       },
     };
+  }
+
+  async logout(userId: string) {
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: {
+          currentSessionToken: null,
+        },
+      });
+    } catch {
+      // Ignore if user not found
+    }
   }
 
   async getProfile(user: JwtUser) {
