@@ -49,4 +49,21 @@ export class AuthController {
   getProfile(@CurrentUser() user: JwtUser) {
     return this.authService.getProfile(user);
   }
+
+  @ApiOperation({ summary: 'Periksa status session aktif (Heartbeat single-device)' })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(AuthGuard('jwt'))
+  @Get('session-check')
+  checkSession(@CurrentUser() user: JwtUser) {
+    return { valid: true, userId: user.userId, username: user.username };
+  }
+
+  @ApiOperation({ summary: 'Logout & Invalidasi Session Token' })
+  @ApiBearerAuth('JWT-auth')
+  @UseGuards(AuthGuard('jwt'))
+  @Post('logout')
+  async logout(@CurrentUser() user: JwtUser) {
+    await this.authService.logout(user.userId);
+    return { message: 'Logout berhasil, sesi telah dihapus.' };
+  }
 }
