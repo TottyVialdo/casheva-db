@@ -81,7 +81,14 @@ export class PinjamanController {
 
   @Patch('pengaturan-bunga')
   @Post('pengaturan-bunga')
-  @Roles(Role.ADMIN_KOPERASI, Role.BENDAHARA, Role.KEPRIM)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN_KOTAMA,
+    Role.ADMIN_SATMINKAL,
+    Role.ADMIN_KOPERASI,
+    Role.BENDAHARA,
+    Role.KEPRIM,
+  )
   @ApiOperation({ summary: 'Ubah suku bunga pinjaman aktif Satminkal (oleh Bendahara)' })
   @ApiResponse({ status: 200, description: 'Suku bunga berhasil diperbarui' })
   updatePengaturanBunga(
@@ -141,7 +148,16 @@ export class PinjamanController {
   }
 
   @Patch(':id/status')
-  @Roles(Role.ADMIN_KOPERASI, Role.BENDAHARA, Role.KEPRIM, Role.PIMPINAN)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN_KOTAMA,
+    Role.ADMIN_SATMINKAL,
+    Role.ADMIN_KOPERASI,
+    Role.BENDAHARA,
+    Role.KEPRIM,
+    Role.PIMPINAN,
+    Role.JURU_BAYAR,
+  )
   @ApiOperation({ summary: 'Ubah status alur persetujuan pinjaman' })
   @ApiResponse({
     status: 200,
@@ -160,7 +176,15 @@ export class PinjamanController {
   }
 
   @Post(':id/cairkan')
-  @Roles(Role.ADMIN_KOPERASI, Role.BENDAHARA, Role.JURU_BAYAR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN_KOTAMA,
+    Role.ADMIN_SATMINKAL,
+    Role.ADMIN_KOPERASI,
+    Role.BENDAHARA,
+    Role.KEPRIM,
+    Role.JURU_BAYAR,
+  )
   @ApiOperation({ summary: 'Cairkan pinjaman & buat jadwal angsuran' })
   @ApiResponse({
     status: 201,
@@ -179,7 +203,14 @@ export class PinjamanController {
   }
 
   @Post(':id/pelunasan-dipercepat')
-  @Roles(Role.ADMIN_KOPERASI, Role.BENDAHARA, Role.JURU_BAYAR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.ADMIN_KOTAMA,
+    Role.ADMIN_SATMINKAL,
+    Role.ADMIN_KOPERASI,
+    Role.BENDAHARA,
+    Role.JURU_BAYAR,
+  )
   @ApiOperation({ summary: 'Pelunasan dipercepat untuk sisa seluruh angsuran' })
   @ApiResponse({
     status: 200,

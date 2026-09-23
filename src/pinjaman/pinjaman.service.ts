@@ -32,17 +32,23 @@ const ALLOWED_TRANSITIONS: Partial<Record<StatusPinjaman, StatusPinjaman[]>> = {
     StatusPinjaman.VERIFIKASI_JURU_BAYAR,
     StatusPinjaman.REKOMENDASI_PIMPINAN,
     StatusPinjaman.SETUJU_KEPRIM,
+    StatusPinjaman.MENUNGGU_DOKUMEN,
+    StatusPinjaman.DICAIRKAN,
     StatusPinjaman.DITOLAK,
   ],
   [StatusPinjaman.VERIFIKASI_PRIMKOP]: [
     StatusPinjaman.VERIFIKASI_JURU_BAYAR,
     StatusPinjaman.REKOMENDASI_PIMPINAN,
     StatusPinjaman.SETUJU_KEPRIM,
+    StatusPinjaman.MENUNGGU_DOKUMEN,
+    StatusPinjaman.DICAIRKAN,
     StatusPinjaman.DITOLAK,
   ],
   [StatusPinjaman.VERIFIKASI_JURU_BAYAR]: [
     StatusPinjaman.REKOMENDASI_PIMPINAN,
     StatusPinjaman.SETUJU_KEPRIM,
+    StatusPinjaman.MENUNGGU_DOKUMEN,
+    StatusPinjaman.DICAIRKAN,
     StatusPinjaman.DITOLAK,
   ],
   [StatusPinjaman.REKOMENDASI_PIMPINAN]: [
@@ -50,11 +56,13 @@ const ALLOWED_TRANSITIONS: Partial<Record<StatusPinjaman, StatusPinjaman[]>> = {
     StatusPinjaman.MENUNGGU_DOKUMEN,
     StatusPinjaman.DICAIRKAN,
     StatusPinjaman.DITOLAK,
+    StatusPinjaman.VERIFIKASI_JURU_BAYAR,
   ],
   [StatusPinjaman.SETUJU_KEPRIM]: [
     StatusPinjaman.MENUNGGU_DOKUMEN,
     StatusPinjaman.DICAIRKAN,
     StatusPinjaman.DITOLAK,
+    StatusPinjaman.REKOMENDASI_PIMPINAN,
   ],
   [StatusPinjaman.MENUNGGU_DOKUMEN]: [
     StatusPinjaman.SETUJU_KEPRIM,
@@ -62,6 +70,10 @@ const ALLOWED_TRANSITIONS: Partial<Record<StatusPinjaman, StatusPinjaman[]>> = {
     StatusPinjaman.DITOLAK,
   ],
   [StatusPinjaman.DICAIRKAN]: [StatusPinjaman.LUNAS],
+  [StatusPinjaman.DITOLAK]: [
+    StatusPinjaman.DIAJUKAN,
+    StatusPinjaman.VERIFIKASI_JURU_BAYAR,
+  ],
 };
 
 // Plafond maksimal pinjaman berdasarkan kategori pangkat
@@ -132,10 +144,11 @@ export class PinjamanService {
   async getPlafondInfo(user: JwtUser, anggotaId: string) {
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user);
     const anggota = await this.prisma.anggota.findFirst({
       where: {
         id: anggotaId,
-        satminkalId: user.satminkalId,
+        ...satminkalScope,
         ...(isAnggota ? { nrpNip: user.username } : {}),
       },
       include: { pangkat: true },
@@ -302,11 +315,12 @@ export class PinjamanService {
   async findOne(user: JwtUser, id: string) {
     const isAnggota =
       user.role === Role.ANGGOTA || (user.role as any) === 'Anggota';
+    const satminkalScope = this.resolveSatminkalScope(user);
     const row = await this.prisma.pinjaman.findFirst({
       where: {
         id,
         anggota: {
-          satminkalId: user.satminkalId,
+          ...satminkalScope,
           ...(isAnggota ? { nrpNip: user.username } : {}),
         },
       },
@@ -324,10 +338,11 @@ export class PinjamanService {
       throw new BadRequestException(err);
     }
 
+    const satminkalScope = this.resolveSatminkalScope(user);
     const anggota = await this.prisma.anggota.findFirst({
       where: {
         id: dto.anggotaId,
-        satminkalId: user.satminkalId,
+        ...satminkalScope,
         isAktif: true,
       },
       include: { pangkat: true },
@@ -405,9 +420,12 @@ export class PinjamanService {
         : StatusPinjaman.DIAJUKAN;
 
     // Ambil suku bunga aktif Satminkal (default 12% per tahun jika belum di-set)
-    const activeSetting = await this.prisma.pengaturanKoperasi.findUnique({
-      where: { satminkalId: user.satminkalId },
-    });
+    const targetSatminkalId = user.satminkalId || anggota.satminkalId;
+    const activeSetting = targetSatminkalId
+      ? await this.prisma.pengaturanKoperasi.findUnique({
+          where: { satminkalId: targetSatminkalId },
+        })
+      : null;
     const activeBungaPersenTahun = activeSetting
       ? toNumber(activeSetting.bungaPinjamanPersenTahun)
       : 12;
@@ -516,10 +534,10 @@ export class PinjamanService {
     const angsuran = await this.prisma.angsuran.findFirst({
       where: {
         id: angsuranId,
-        pinjaman: { anggota: { satminkalId: user.satminkalId } },
+        ...(user.satminkalId ? { pinjaman: { anggota: { satminkalId: user.satminkalId } } } : {}),
       },
       include: {
-        pinjaman: true,
+        pinjaman: { include: { anggota: true } },
       },
     });
     if (!angsuran) {
@@ -529,12 +547,13 @@ export class PinjamanService {
       throw new BadRequestException('Angsuran sudah dibayar');
     }
 
+    const targetSatminkalId = user.satminkalId || angsuran.pinjaman.anggota.satminkalId;
     const satminkal = await this.prisma.satminkal.findUniqueOrThrow({
-      where: { id: user.satminkalId },
+      where: { id: targetSatminkalId },
     });
     const tahun = new Date().getFullYear();
     const noInvoice = await this.generateInvoice(
-      user.satminkalId!,
+      targetSatminkalId,
       satminkal.kode,
       tahun,
     );
@@ -568,7 +587,7 @@ export class PinjamanService {
 
       await tx.pendapatan.create({
         data: {
-          satminkalId: user.satminkalId,
+          satminkalId: targetSatminkalId,
           tahun,
           jenis: JenisPendapatan.BUNGA_PINJAMAN,
           nominal: angsuran.bunga,
@@ -601,8 +620,9 @@ export class PinjamanService {
       throw new BadRequestException('Pinjaman sudah tidak memiliki sisa pokok');
     }
 
+    const targetSatminkalId = user.satminkalId || pinjaman.anggota.satminkalId;
     const satminkal = await this.prisma.satminkal.findUniqueOrThrow({
-      where: { id: user.satminkalId },
+      where: { id: targetSatminkalId },
     });
     const tglPelunasan = dto?.tanggalPelunasan
       ? new Date(dto.tanggalPelunasan)
@@ -610,7 +630,7 @@ export class PinjamanService {
     const tahun = tglPelunasan.getFullYear();
 
     const noInvoice = await this.generateInvoice(
-      user.satminkalId!,
+      targetSatminkalId,
       satminkal.kode,
       tahun,
     );
@@ -645,7 +665,7 @@ export class PinjamanService {
       if (totalBungaSisa > 0) {
         await tx.pendapatan.create({
           data: {
-            satminkalId: user.satminkalId,
+            satminkalId: targetSatminkalId,
             tahun,
             jenis: JenisPendapatan.BUNGA_PINJAMAN,
             nominal: decimal(totalBungaSisa),
@@ -802,11 +822,12 @@ export class PinjamanService {
     const tglBayar = dto.tanggalBayar ? new Date(dto.tanggalBayar) : new Date();
     const tahun = tglBayar.getFullYear();
 
+    const targetSatminkalId = user.satminkalId || pinjaman.anggota.satminkalId;
     const satminkal = await this.prisma.satminkal.findUniqueOrThrow({
-      where: { id: user.satminkalId },
+      where: { id: targetSatminkalId },
     });
     const noInvoice = await this.generateInvoice(
-      user.satminkalId!,
+      targetSatminkalId,
       satminkal.kode,
       tahun,
     );
@@ -888,7 +909,7 @@ export class PinjamanService {
       if (porsiBunga > 0) {
         await tx.pendapatan.create({
           data: {
-            satminkalId: user.satminkalId,
+            satminkalId: targetSatminkalId,
             tahun,
             jenis: JenisPendapatan.BUNGA_PINJAMAN,
             nominal: decimal(porsiBunga),
